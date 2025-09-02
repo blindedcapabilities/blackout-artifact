@@ -1,0 +1,58 @@
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb
+$(HOME)/cheri/benchmarks/ccs_submission/coremark/coremark_nopurecap.elf
+
+2K performance run parameters for coremark.
+Pointer space    : 16
+CoreMark Size    : 666
+Total ticks      : 927763697
+Total time (secs): 37
+Iterations/Sec   : 135
+Iterations       : 5000
+Compiler version : Clang 15.0.0 (https://github.com/CTSRD-CHERI/llvm-project.git b4c3aa4d9a27f038b366ba5b1f06acdb3b6108e6)
+Compiler flags   : -mcmodel=medium -mno-relax --sysroot=$(HOME)/cheri//output/sdk/baremetal/baremetal-newlib-riscv64/riscv64-unknown-elf -target riscv64 -march=rv64gc -mabi=lp64 -DCLOCKS_PER_SEC=25000000 -DUART_BAUD_RATE=115200 -O3 -static -std=gnu99 -ffast-math -fno-common -fno-builtin-printf -fno-builtin-memset -I./riscv-common -DPERFORMANCE_RUN=1 -DPERFORMANCE_RUN=1  -v -static -nostartfiles -lm -lm -lc -lclang_rt.builtins-riscv64 -L$(HOME)/cheri/output/sdk/baremetal/baremetal-riscv64/lib/ -T ./riscv-common/p3_fpga.ld -fuse-ld=lld
+Memory location  : STACK
+seedcrc          : 0xe9f5
+[0]crclist       : 0x70a5
+[0]crcmatrix     : 0xdb4b
+[0]crcstate      : 0x905f
+[0]crcfinal      : 0x03ad
+Correct operation validated. See README.md for run and reporting rules.
+
+
+2K performance run parameters for coremark.
+Pointer space    : 16
+CoreMark Size    : 666
+Total ticks      : 927653722
+Total time (secs): 37
+Iterations/Sec   : 135
+Iterations       : 5000
+Compiler version : Clang 15.0.0 (https://github.com/CTSRD-CHERI/llvm-project.git b4c3aa4d9a27f038b366ba5b1f06acdb3b6108e6)
+Compiler flags   : -mcmodel=medium -mno-relax --sysroot=$(HOME)/cheri//output/sdk/baremetal/baremetal-newlib-riscv64/riscv64-unknown-elf -target riscv64 -march=rv64gc -mabi=lp64 -DCLOCKS_PER_SEC=25000000 -DUART_BAUD_RATE=115200 -O3 -static -std=gnu99 -ffast-math -fno-common -fno-builtin-printf -fno-builtin-memset -I./riscv-common -DPERFORMANCE_RUN=1 -DPERFORMANCE_RUN=1  -v -static -nostartfiles -lm -lm -lc -lclang_rt.builtins-riscv64 -L$(HOME)/cheri/output/sdk/baremetal/baremetal-riscv64/lib/ -T ./riscv-common/p3_fpga.ld -fuse-ld=lld
+Memory location  : STACK
+seedcrc          : 0xe9f5
+[0]crclist       : 0x70a5
+[0]crcmatrix     : 0xdb4b
+[0]crcstate      : 0x905f
+[0]crcfinal      : 0x03ad
+Correct operation validated. See README.md for run and reporting rules.
+
+
+2K performance run parameters for coremark.
+Pointer space    : 16
+CoreMark Size    : 666
+Total ticks      : 927605262
+Total time (secs): 37
+Iterations/Sec   : 135
+Iterations       : 5000
+Compiler version : Clang 15.0.0 (https://github.com/CTSRD-CHERI/llvm-project.git b4c3aa4d9a27f038b366ba5b1f06acdb3b6108e6)
+Compiler flags   : -mcmodel=medium -mno-relax --sysroot=$(HOME)/cheri//output/sdk/baremetal/baremetal-newlib-riscv64/riscv64-unknown-elf -target riscv64 -march=rv64gc -mabi=lp64 -DCLOCKS_PER_SEC=25000000 -DUART_BAUD_RATE=115200 -O3 -static -std=gnu99 -ffast-math -fno-common -fno-builtin-printf -fno-builtin-memset -I./riscv-common -DPERFORMANCE_RUN=1 -DPERFORMANCE_RUN=1  -v -static -nostartfiles -lm -lm -lc -lclang_rt.builtins-riscv64 -L$(HOME)/cheri/output/sdk/baremetal/baremetal-riscv64/lib/ -T ./riscv-common/p3_fpga.ld -fuse-ld=lld
+Memory location  : STACK
+seedcrc          : 0xe9f5
+[0]crclist       : 0x70a5
+[0]crcmatrix     : 0xdb4b
+[0]crcstate      : 0x905f
+[0]crcfinal      : 0x03ad
+Correct operation validated. See README.md for run and reporting rules.
+
+
+=(927763697+927653722+927605262)/3

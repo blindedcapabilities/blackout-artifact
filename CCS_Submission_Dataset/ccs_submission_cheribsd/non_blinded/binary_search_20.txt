@@ -1,0 +1,21 @@
+# for i in $(seq 1 20); do time ./binary_search_20.o; done
+        1.38 real         0.55 user         0.76 sys
+        1.37 real         0.48 user         0.82 sys
+        1.37 real         0.52 user         0.79 sys
+        1.37 real         0.53 user         0.77 sys
+        1.37 real         0.48 user         0.83 sys
+        1.36 real         0.52 user         0.79 sys
+        1.37 real         0.53 user         0.78 sys
+        1.37 real         0.45 user         0.86 sys
+        1.37 real         0.50 user         0.81 sys
+        1.37 real         0.50 user         0.81 sys
+        1.37 real         0.49 user         0.82 sys
+        1.37 real         0.52 user         0.79 sys
+        1.36 real         0.48 user         0.82 sys
+        1.37 real         0.51 user         0.80 sys
+        1.36 real         0.50 user         0.81 sys
+        1.37 real         0.49 user         0.81 sys
+        1.37 real         0.48 user         0.83 sys
+        1.37 real         0.45 user         0.86 sys
+        1.37 real         0.57 user         0.74 sys
+        1.37 real         0.50 user         0.81 sys

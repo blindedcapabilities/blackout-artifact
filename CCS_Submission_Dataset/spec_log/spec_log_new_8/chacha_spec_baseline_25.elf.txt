@@ -1,0 +1,8 @@
+# Log for ELF: chacha_spec_baseline_25.elf
+# Timestamp: 2025-07-26 23:33:09.472094
+
+Mode: 0, input: 25
+75s/25c
+work time   :[18237291]
+encrypt time:[7183433]
+total time  :[25420724]

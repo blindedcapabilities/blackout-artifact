@@ -1,0 +1,6 @@
+# for i in $(seq 1 5); do time ./int_sort_20.o; done
+       91.58 real        89.91 user         0.76 sys
+       91.70 real        90.05 user         0.75 sys
+       91.66 real        90.02 user         0.72 sys
+       91.73 real        90.01 user         0.80 sys
+       91.65 real        89.93 user         0.82 sys

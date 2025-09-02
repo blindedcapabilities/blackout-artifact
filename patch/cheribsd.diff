@@ -1,0 +1,658 @@
+diff --git a/include/stdlib.h b/include/stdlib.h
+index 0a5a66eac2dd..ac35d95fe6a8 100644
+--- a/include/stdlib.h
++++ b/include/stdlib.h
+@@ -29,6 +29,14 @@
+  * SUCH DAMAGE.
+  */
+ 
++
++/**
++ * Changes for the blinded capability extension
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
+ #ifndef _STDLIB_H_
+ #define	_STDLIB_H_
+ 
+@@ -101,6 +109,7 @@ char	*getenv(const char *);
+ long	 labs(long) __pure2;
+ ldiv_t	 ldiv(long, long) __pure2;
+ void	*malloc(size_t) __malloc_like __result_use_check __alloc_size(1);
++void	*blinded_malloc(size_t) __malloc_like __result_use_check __alloc_size(1);
+ void	 malloc_revoke(void);
+ int	 mblen(const char *, size_t);
+ size_t	 mbstowcs(wchar_t * __restrict , const char * __restrict, size_t);
+diff --git a/lib/libc/gen/dlfcn.c b/lib/libc/gen/dlfcn.c
+index 4df00f636742..a00dc0946f6b 100644
+--- a/lib/libc/gen/dlfcn.c
++++ b/lib/libc/gen/dlfcn.c
+@@ -26,6 +26,14 @@
+  * SUCH DAMAGE.
+  */
+ 
++ /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
+ #if !defined(IN_LIBDL) || defined(PIC)
+ 
+ /*
+@@ -223,7 +231,7 @@ dl_init_phdr_info(void)
+ #ifdef __CHERI_PURE_CAPABILITY__
+ 			    /* XXXAR: currently needs load_cap for libunwind */
+ 			    (const Elf_Phdr *)cheri_andperm(auxp->a_un.a_ptr,
+-			        CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP);
++			        CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | CHERI_PERM_BLINDED);
+ #else
+ 			    (const Elf_Phdr *)auxp->a_un.a_ptr;
+ #endif
+diff --git a/lib/libc/stdlib/malloc/Symbol.map b/lib/libc/stdlib/malloc/Symbol.map
+index 4ef92cc098be..84a9f268f8f9 100644
+--- a/lib/libc/stdlib/malloc/Symbol.map
++++ b/lib/libc/stdlib/malloc/Symbol.map
+@@ -2,6 +2,7 @@ FBSD_1.0 {
+ 	_malloc_options;
+ 	_malloc_message;
+ 	malloc;
++  blinded_malloc;
+ 	posix_memalign;
+ 	calloc;
+ 	realloc;
+diff --git a/lib/libc/stdlib/malloc/mrs/mrs.3 b/lib/libc/stdlib/malloc/mrs/mrs.3
+index d7257ccfe8be..6206910bea99 100644
+--- a/lib/libc/stdlib/malloc/mrs/mrs.3
++++ b/lib/libc/stdlib/malloc/mrs/mrs.3
+@@ -29,6 +29,15 @@
+ .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ .\" SUCH DAMAGE.
+ .\"
++
++.\"
++.\" Changes for the blinded capability extension
++.\" @author Merve Gulmez 
++.\" @copyright © Ericsson AB 2025
++.\"
++.\" SPDX-License-Identifier: BSD-3-Clause
++.\"
++
+ .Dd December 12, 2023
+ .Dt MRS 3
+ .Os
+@@ -95,6 +104,7 @@ This results in the revocation of all pointers staged for quarantine by
+ .Fn free
+ or
+ .Fn realloc .
++.Fn blinded_malloc
+ .Sh ENABLING REVOCATION
+ Because heap temporal safety is an experimental feature with performance
+ impacts that are not fully characterized,
+diff --git a/lib/libc/stdlib/malloc/mrs/mrs.c b/lib/libc/stdlib/malloc/mrs/mrs.c
+index f54807c54fbf..4c4f8e15ac87 100644
+--- a/lib/libc/stdlib/malloc/mrs/mrs.c
++++ b/lib/libc/stdlib/malloc/mrs/mrs.c
+@@ -28,6 +28,15 @@
+  * SUCH DAMAGE.
+  */
+ 
++ /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++
+ #include <sys/param.h>
+ #include <sys/ktrace.h>
+ #include <sys/mman.h>
+@@ -1438,6 +1447,19 @@ mrs_calloc(size_t number, size_t size)
+ 	return (allocated_region);
+ }
+ 
++
++void *
++blinded_malloc(size_t size)
++{
++	void *allocated_region;
++	
++	allocated_region = mrs_malloc(size); 
++	allocated_region = cheri_andperm(allocated_region, ~CHERI_PERM_BLINDED); 
++
++	return (allocated_region);
++}
++
++
+ static int
+ mrs_posix_memalign(void **ptr, size_t alignment, size_t size)
+ {
+@@ -1561,6 +1583,9 @@ mrs_free(void *ptr)
+ 	bzero(cheri_setoffset(ptr, 0), cheri_getlen(ptr));
+ #endif
+ 
++	if ((cheri_getperm(ptr) & CHERI_PERM_BLINDED) == 0) {
++		bzero(cheri_setoffset(ptr, 0), cheri_getlen(ptr));
++	}
+ 	mrs_lock(&app_quarantine_lock);
+ 	quarantine_insert(app_quarantine, ins, cheri_getlen(ins));
+ 	mrs_unlock(&app_quarantine_lock);
+diff --git a/libexec/rtld-elf/cheri/cheri_reloc.h b/libexec/rtld-elf/cheri/cheri_reloc.h
+index 911044981faf..431248666a7b 100644
+--- a/libexec/rtld-elf/cheri/cheri_reloc.h
++++ b/libexec/rtld-elf/cheri/cheri_reloc.h
+@@ -29,6 +29,16 @@
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  */
++
++/**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++
+ #include <dlfcn.h>
+ 
+ #include <sys/types.h>
+@@ -55,7 +65,7 @@ void _do___caprelocs(const struct capreloc *start_relocs,
+ {
+ 	cheri_init_globals_impl(start_relocs, stop_relocs, /*data_cap=*/gdc,
+ 	    /*code_cap=*/pcc, /*rodata_cap=*/pcc,
+-	    /*tight_code_bounds=*/tight_pcc_bounds, base_addr);
++	    /*tight_code_bounds=*/tight_pcc_bounds, base_addr, 0, 0);
+ }
+ #endif
+ 
+diff --git a/libexec/rtld-elf/rtld.c b/libexec/rtld-elf/rtld.c
+index 9f7364aa90e3..0320087b0a02 100644
+--- a/libexec/rtld-elf/rtld.c
++++ b/libexec/rtld-elf/rtld.c
+@@ -38,6 +38,15 @@
+  * John Polstra <jdp@polstra.com>.
+  */
+ 
++
++  /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
+ #include <sys/param.h>
+ #include <sys/mount.h>
+ #include <sys/mman.h>
+@@ -4679,9 +4688,9 @@ rtld_fill_dl_phdr_info(const Obj_Entry *obj, struct dl_phdr_info *phdr_info)
+ 
+ #ifdef __CHERI_PURE_CAPABILITY__
+ 	phdr_info->dlpi_addr = (uintptr_t)cheri_andperm(obj->relocbase,
+-	    CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP);
++	    CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | CHERI_PERM_BLINDED);
+ 	phdr_info->dlpi_phdr = cheri_andperm(obj->phdr, CHERI_PERM_LOAD |
+-	    CHERI_PERM_LOAD_CAP);
++	    CHERI_PERM_LOAD_CAP | CHERI_PERM_BLINDED);
+ #else
+ 	phdr_info->dlpi_addr = (Elf_Addr)obj->relocbase;
+ 	phdr_info->dlpi_phdr = obj->phdr;
+diff --git a/sys/cheri/cheric.h b/sys/cheri/cheric.h
+index 151149b5cb93..b3eeaeee9e86 100644
+--- a/sys/cheri/cheric.h
++++ b/sys/cheri/cheric.h
+@@ -29,6 +29,15 @@
+  * SUCH DAMAGE.
+  */
+ 
++/**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++
+ #ifndef _SYS_CHERIC_H_
+ #define	_SYS_CHERIC_H_
+ 
+@@ -175,14 +184,14 @@ cheri_can_access(const void * __capability cap, ptraddr_t perms, ptraddr_t base,
+ 	cheri_setbounds(__builtin_cheri_cap_from_pointer(cheri_getpcc(), ptr), len)
+ 
+ #define cheri_codeptrperm(ptr, len, perm)	\
+-	cheri_andperm(cheri_codeptr(ptr, len), perm | CHERI_PERM_GLOBAL)
++	cheri_andperm(cheri_codeptr(ptr, len), perm | CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED)
+ 
+ #define cheri_ptr(ptr, len)	\
+ 	cheri_setbounds(    \
+ 	    (__cheri_tocap __typeof__((ptr)[0]) *__capability)ptr, len)
+ 
+ #define cheri_ptrperm(ptr, len, perm)	\
+-	cheri_andperm(cheri_ptr(ptr, len), perm | CHERI_PERM_GLOBAL)
++	cheri_andperm(cheri_ptr(ptr, len), perm | CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED)
+ 
+ #define cheri_ptrpermoff(ptr, len, perm, off)	\
+ 	cheri_setoffset(cheri_ptrperm(ptr, len, perm), off)
+@@ -203,7 +212,7 @@ cheri_maketype(void * __capability root_type, register_t type)
+ 	c = root_type;
+ 	c = cheri_setoffset(c, type);	/* Set type as desired. */
+ 	c = cheri_setbounds(c, 1);	/* ISA implies length of 1. */
+-	c = cheri_andperm(c, CHERI_PERM_GLOBAL | CHERI_PERM_SEAL); /* Perms. */
++	c = cheri_andperm(c, CHERI_PERM_GLOBAL | CHERI_PERM_SEAL | CHERI_PERM_BLINDED); /* Perms. */
+ 	return (c);
+ }
+ 
+diff --git a/sys/conf/ldscript.riscv b/sys/conf/ldscript.riscv
+index 9a2764a23789..391f824a14ea 100644
+--- a/sys/conf/ldscript.riscv
++++ b/sys/conf/ldscript.riscv
+@@ -83,6 +83,7 @@ SECTIONS
+   {
+     *(.dtors)
+   }
++  .blinded       : { __start_blinded = .; *(.blinded) __stop_blinded = .; }
+   .got           : { *(.got.plt) *(.got) }
+   .dynamic       : { *(.dynamic) }
+   /* We want the small data sections together, so single-instruction offsets
+diff --git a/sys/kern/imgact_elf.c b/sys/kern/imgact_elf.c
+index df9500c7c4c9..00fee843476a 100644
+--- a/sys/kern/imgact_elf.c
++++ b/sys/kern/imgact_elf.c
+@@ -31,6 +31,15 @@
+  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++  /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++ 
+ #include <sys/cdefs.h>
+ #include "opt_capsicum.h"
+ 
+@@ -560,7 +569,7 @@ __elfN(build_imgact_capability)(struct image_params *imgp,
+     Elf_Addr *preferred_rbase)
+ {
+ 	u_long perm = CHERI_PERM_STORE | CHERI_PERM_GLOBAL |
+-	    CHERI_PERM_STORE_CAP;
++	    CHERI_PERM_STORE_CAP | CHERI_PERM_BLINDED;
+ 	vm_offset_t start = (vm_offset_t)-1;
+ 	vm_offset_t end = 0;
+ 	vm_offset_t seg_addr;
+diff --git a/sys/kern/kern_exec.c b/sys/kern/kern_exec.c
+index 0f22e613c991..4ffc93e3b9b9 100644
+--- a/sys/kern/kern_exec.c
++++ b/sys/kern/kern_exec.c
+@@ -26,6 +26,15 @@
+  * SUCH DAMAGE.
+  */
+ 
++  /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++ 
+ #include <sys/cdefs.h>
+ #include "opt_capsicum.h"
+ #include "opt_hwpmc_hooks.h"
+@@ -1300,7 +1309,7 @@ exec_map_stack(struct image_params *imgp)
+ 	perms = (~CHERI_PROT2PERM_MASK | vm_map_prot2perms(stack_prot)) &
+ 	    CHERI_CAP_USER_DATA_PERMS;
+ #ifdef __CHERI_PURE_CAPABILITY__
+-	imgp->stack = (void *)cheri_andperm(stack_top, perms);
++	imgp->stack = (void *)cheri_andperm(stack_top, perms | CHERI_PERM_BLINDED);
+ #else
+ 	if (sv->sv_flags & SV_CHERI)
+ 		imgp->stack = cheri_capability_build_user_data(perms,
+diff --git a/sys/riscv/cheri/cheri_exception.c b/sys/riscv/cheri/cheri_exception.c
+index 2eed59f5fcf1..31d09f444eb0 100644
+--- a/sys/riscv/cheri/cheri_exception.c
++++ b/sys/riscv/cheri/cheri_exception.c
+@@ -28,6 +28,15 @@
+  * SUCH DAMAGE.
+  */
+ 
++  /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++ 
+ #include <sys/param.h>
+ #include <sys/signal.h>
+ #include <sys/systm.h>
+@@ -57,6 +66,10 @@ static const char *cheri_exccode_descr[] = {
+ 	[CHERI_EXCCODE_PERM_CINVOKE] = "permit cinvoke violation",
+ 	[CHERI_EXCCODE_PERM_UNSEAL] = "permit unseal violation",
+ 	[CHERI_EXCCODE_PERM_SET_CID] = "permit CSetCID violation",
++  [CHERI_EXCCODE_BLIME_CONTROL_FLOW] = "permit blime", 
++  [CHERI_EXCCODE_BLIME_MEMORY_OP] = "permit blime",	
++  [CHERI_EXCCODE_BLIME_CAP_OP] = "permit blime",
++  [CHERI_EXCCODE_BLIME_ST] = "permit blime",
+ };
+ 
+ static const char *cheri_cap_idx_descr[] = {
+@@ -164,6 +177,12 @@ cheri_stval_to_sicode(register_t stval)
+ 	case CHERI_EXCCODE_PERM_SET_CID:
+ 		return (PROT_CHERI_PERM);
+ 
++  case CHERI_EXCCODE_BLIME_CONTROL_FLOW:
++  case CHERI_EXCCODE_BLIME_MEMORY_OP:
++  case CHERI_EXCCODE_BLIME_CAP_OP:
++  case CHERI_EXCCODE_BLIME_ST:
++    return (PROT_CHERI_PERM);
++
+ 	case CHERI_EXCCODE_IMPRECISE:
+ 		return (PROT_CHERI_IMPRECISE);
+ 
+diff --git a/sys/riscv/conf/CHERI-NOCAPREVOKE-GFE-NODEBUG b/sys/riscv/conf/CHERI-NOCAPREVOKE-GFE-NODEBUG
+new file mode 100644
+index 000000000000..5f478b64c900
+--- /dev/null
++++ b/sys/riscv/conf/CHERI-NOCAPREVOKE-GFE-NODEBUG
+@@ -0,0 +1,8 @@
++#NO_UNIVERSE
++
++include "GFE"
++include "std.CHERI"
++include "std.CHERI-NOCAPREVOKE"
++include "../../conf/std.nodebug"
++
++ident CHERI-NOCAPREVOKE-NOGFE
+diff --git a/sys/riscv/conf/CHERI-PURECAP-NOCAPREVOKE-GFE-NODEBUG b/sys/riscv/conf/CHERI-PURECAP-NOCAPREVOKE-GFE-NODEBUG
+new file mode 100644
+index 000000000000..9284b92d7f25
+--- /dev/null
++++ b/sys/riscv/conf/CHERI-PURECAP-NOCAPREVOKE-GFE-NODEBUG
+@@ -0,0 +1,8 @@
++#NO_UNIVERSE
++
++include "GFE"
++include "std.CHERI-PURECAP"
++include "std.CHERI-NOCAPREVOKE"
++include "../../conf/std.nodebug"
++
++ident CHERI-PURECAP-NOCAPREVOKE-GFE-NODEBUG
+diff --git a/sys/riscv/include/cherireg.h b/sys/riscv/include/cherireg.h
+index d2ad9f88441a..3b2648341d37 100644
+--- a/sys/riscv/include/cherireg.h
++++ b/sys/riscv/include/cherireg.h
+@@ -38,6 +38,14 @@
+  * SUCH DAMAGE.
+  */
+ 
++  /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
+ #ifndef _MACHINE_CHERIREG_H_
+ #define	_MACHINE_CHERIREG_H_
+ 
+@@ -62,7 +70,7 @@
+ #define	CHERI_PERM_UNSEAL			(1 << 9)	/* 0x00000200 */
+ #define	CHERI_PERM_SYSTEM_REGS			(1 << 10)	/* 0x00000400 */
+ #define	CHERI_PERM_SET_CID			(1 << 11)	/* 0x00000800 */
+-
++#define CHERI_PERM_BLINDED 			(1 << 12)
+ /* User-defined permission bits. */
+ #define	CHERI_PERM_SW0			(1 << 15)	/* 0x00008000 */
+ #define	CHERI_PERM_SW1			(1 << 16)	/* 0x00010000 */
+@@ -82,18 +90,18 @@
+ 	CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_LOAD_CAP |	\
+ 	CHERI_PERM_STORE_CAP | CHERI_PERM_STORE_LOCAL_CAP |		\
+ 	CHERI_PERM_SEAL | CHERI_PERM_INVOKE | CHERI_PERM_UNSEAL |	\
+-	CHERI_PERM_SYSTEM_REGS | CHERI_PERM_SET_CID)
++	CHERI_PERM_SYSTEM_REGS | CHERI_PERM_SET_CID | CHERI_PERM_BLINDED)
+ 
+ /*
+  * vm_prot_t to capability permission bits
+  */
+ #define	CHERI_PERMS_PROT2PERM_READ					\
+-	(CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP)
++	(CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | CHERI_PERM_BLINDED )
+ #define	CHERI_PERMS_PROT2PERM_WRITE					\
+ 	(CHERI_PERM_STORE | CHERI_PERM_STORE_CAP |			\
+-	 CHERI_PERM_STORE_LOCAL_CAP)
++	 CHERI_PERM_STORE_LOCAL_CAP | CHERI_PERM_BLINDED)
+ #define	CHERI_PERMS_PROT2PERM_EXEC					\
+-	(CHERI_PERM_EXECUTE | CHERI_PERMS_PROT2PERM_READ)
++	(CHERI_PERM_EXECUTE | CHERI_PERMS_PROT2PERM_READ | CHERI_PERM_BLINDED)
+ 
+ /*
+  * Hardware defines a kind of tripartite taxonomy: memory, type, and CID.
+@@ -105,7 +113,7 @@
+ #define CHERI_PERMS_HWALL_MEMORY                                        \
+ 	(CHERI_PERM_EXECUTE | CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP |   \
+ 		CHERI_PERM_STORE | CHERI_PERM_STORE_CAP |               \
+-		CHERI_PERM_STORE_LOCAL_CAP | CHERI_PERM_INVOKE)
++		CHERI_PERM_STORE_LOCAL_CAP | CHERI_PERM_INVOKE | CHERI_PERM_BLINDED)
+ 
+ #define CHERI_PERMS_HWALL_OTYPE	(CHERI_PERM_SEAL | CHERI_PERM_UNSEAL)
+ 
+@@ -120,20 +128,20 @@
+  */
+ #define	CHERI_PERMS_USERSPACE						\
+ 	(CHERI_PERM_GLOBAL | CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP |	\
+-	CHERI_PERM_INVOKE | (CHERI_PERMS_SWALL & ~CHERI_PERM_SW_VMEM))
++	CHERI_PERM_INVOKE | CHERI_PERM_BLINDED | (CHERI_PERMS_SWALL & ~CHERI_PERM_SW_VMEM))
+ 
+ #define	CHERI_PERMS_USERSPACE_CODE					\
+-	(CHERI_PERMS_USERSPACE | CHERI_PERM_EXECUTE)
++	(CHERI_PERMS_USERSPACE | CHERI_PERM_EXECUTE | CHERI_PERM_BLINDED)
+ 
+ #define	CHERI_PERMS_USERSPACE_SEALCAP					\
+-	(CHERI_PERM_GLOBAL | CHERI_PERM_SEAL | CHERI_PERM_UNSEAL)
++	(CHERI_PERM_GLOBAL | CHERI_PERM_SEAL | CHERI_PERM_UNSEAL | CHERI_PERM_BLINDED)
+ 
+ #define	CHERI_PERMS_USERSPACE_DATA					\
+ 	(CHERI_PERMS_USERSPACE | CHERI_PERM_STORE |			\
+-	CHERI_PERM_STORE_CAP | CHERI_PERM_STORE_LOCAL_CAP)
++	CHERI_PERM_STORE_CAP | CHERI_PERM_STORE_LOCAL_CAP | CHERI_PERM_BLINDED)
+ 
+ #define	CHERI_PERMS_USERSPACE_RODATA					\
+-	(CHERI_PERM_GLOBAL | CHERI_PERM_LOAD)
++	(CHERI_PERM_GLOBAL | CHERI_PERM_LOAD | CHERI_PERM_BLINDED)
+ 
+ /*
+  * Corresponding permission masks for kernel code and data; these are
+@@ -141,20 +149,20 @@
+  * becomes more capability-aware.
+  */
+ #define	CHERI_PERMS_KERNEL						\
+-	(CHERI_PERM_GLOBAL | CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP)	\
++	(CHERI_PERM_GLOBAL | CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | CHERI_PERM_BLINDED)	\
+ 
+ #define	CHERI_PERMS_KERNEL_CODE						\
+-	(CHERI_PERMS_KERNEL | CHERI_PERM_EXECUTE | CHERI_PERM_SYSTEM_REGS)
++	(CHERI_PERMS_KERNEL | CHERI_PERM_EXECUTE | CHERI_PERM_SYSTEM_REGS | CHERI_PERM_BLINDED)
+ 
+ #define	CHERI_PERMS_KERNEL_DATA				       		\
+ 	(CHERI_PERMS_KERNEL | CHERI_PERM_STORE | CHERI_PERM_STORE_CAP | \
+-	CHERI_PERM_STORE_LOCAL_CAP)
++	CHERI_PERM_STORE_LOCAL_CAP | CHERI_PERM_BLINDED)
+ 
+ #define	CHERI_PERMS_KERNEL_RODATA			       		\
+-	(CHERI_PERMS_KERNEL)
++	(CHERI_PERMS_KERNEL | CHERI_PERM_BLINDED)
+ 
+ #define	CHERI_PERMS_KERNEL_SEALCAP					\
+-	(CHERI_PERM_GLOBAL | CHERI_PERM_SEAL | CHERI_PERM_UNSEAL)
++	(CHERI_PERM_GLOBAL | CHERI_PERM_SEAL | CHERI_PERM_UNSEAL | CHERI_PERM_BLINDED)
+ 
+ #define	CHERI_FLAGS_CAP_MODE	0x1
+ 
+@@ -195,10 +203,10 @@
+ #define	_CHERI_EXCCODE_RESERVED09	0x09
+ #define	CHERI_EXCCODE_IMPRECISE		0x0a
+ #define	CHERI_EXCCODE_UNALIGNED_BASE	0x0b
+-#define	_CHERI_EXCCODE_RESERVED0c	0x0c
+-#define	_CHERI_EXCCODE_RESERVED0d	0x0d
+-#define	_CHERI_EXCCODE_RESERVED0e	0x0e
+-#define	_CHERI_EXCCODE_RESERVED0f	0x0f
++#define	CHERI_EXCCODE_BLIME_CONTROL_FLOW	0x0c
++#define	CHERI_EXCCODE_BLIME_MEMORY_OP	0x0d
++#define	CHERI_EXCCODE_BLIME_CAP_OP	0x0e
++#define	CHERI_EXCCODE_BLIME_ST	0x0f
+ #define	CHERI_EXCCODE_GLOBAL		0x10
+ #define	CHERI_EXCCODE_PERM_EXECUTE	0x11
+ #define	CHERI_EXCCODE_PERM_LOAD		0x12
+diff --git a/sys/riscv/riscv/pmap.c b/sys/riscv/riscv/pmap.c
+index 9a3f1d60d5bf..7448381f094e 100644
+--- a/sys/riscv/riscv/pmap.c
++++ b/sys/riscv/riscv/pmap.c
+@@ -93,6 +93,15 @@
+  * SUCH DAMAGE.
+  */
+ 
++
++/**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
+ #include <sys/cdefs.h>
+ /*
+  *	Manages physical address maps.
+@@ -1169,6 +1178,7 @@ pmap_map(vm_pointer_t *virt, vm_paddr_t start, vm_paddr_t end, int prot)
+ 	p = cheri_kern_andperm(p, vm_map_prot2perms(prot) |
+ 	    ~CHERI_PROT2PERM_MASK);
+ 
++  
+ 	return (p);
+ }
+ 
+diff --git a/sys/vm/vm_cheri_revoke.c b/sys/vm/vm_cheri_revoke.c
+index 5ed53d089e45..086d351791be 100644
+--- a/sys/vm/vm_cheri_revoke.c
++++ b/sys/vm/vm_cheri_revoke.c
+@@ -31,6 +31,15 @@
+  * SUCH DAMAGE.
+  */
+ 
++
++/**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
+ #include "opt_vm.h"
+ 
+ #include <sys/param.h>
+@@ -1156,7 +1165,7 @@ vm_cheri_revoke_cookie_init(vm_map_t map, struct vm_cheri_revoke_cookie *crc)
+ 	 * the remote one!
+ 	 */
+ 	crc->crshadow = cheri_capability_build_user_rwx_unchecked(
+-	    CHERI_PERM_LOAD | CHERI_PERM_GLOBAL,
++	    CHERI_PERM_LOAD | CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED,
+ 	    curproc->p_sysent->sv_cheri_revoke_shadow_base,
+ 	    curproc->p_sysent->sv_cheri_revoke_shadow_length,
+ 	    curproc->p_sysent->sv_cheri_revoke_shadow_offset);
+@@ -1333,7 +1342,7 @@ vm_cheri_revoke_shadow_cap(struct sysentvec *sv, int sel, vm_offset_t base,
+ 
+ 		return (cheri_capability_build_user_data(
+ 		    (pmask & (CHERI_PERM_LOAD | CHERI_PERM_STORE)) |
+-		    CHERI_PERM_GLOBAL,
++		    CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED,
+ 		    shadow_base, shadow_size, 0));
+ 	}
+ 	case CHERI_REVOKE_SHADOW_OTYPE: {
+@@ -1352,12 +1361,12 @@ vm_cheri_revoke_shadow_cap(struct sysentvec *sv, int sel, vm_offset_t base,
+ 		shadow_size = size / VM_CHERI_REVOKE_GSZ_OTYPE / 8;
+ 
+ 		return (cheri_capability_build_user_data(
+-		    CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL,
++		    CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED,
+ 		    shadow_base, shadow_size, 0));
+ 	}
+ 	case CHERI_REVOKE_SHADOW_INFO_STRUCT: {
+ 		return (cheri_capability_build_user_data(
+-		    CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | CHERI_PERM_GLOBAL,
++		    CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED,
+ 		    sv->sv_cheri_revoke_info_page,
+ 		    sizeof(struct cheri_revoke_info), 0));
+ 	}
+@@ -1370,7 +1379,7 @@ vm_cheri_revoke_shadow_cap(struct sysentvec *sv, int sel, vm_offset_t base,
+ 		    sv->sv_cheri_revoke_shadow_offset;
+ 
+ 		return (cheri_capability_build_user_data(
+-		    CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL,
++		    CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED,
+ 		    shadow_base, shadow_size, 0));
+ 	}
+ 	default:
+@@ -1387,6 +1396,6 @@ vm_cheri_revoke_info_page(struct vm_map *map, struct sysentvec *sv,
+ 
+ 	*ifp = cheri_capability_build_user_data(CHERI_PERM_LOAD |
+ 	    CHERI_PERM_LOAD_CAP | CHERI_PERM_STORE | CHERI_PERM_STORE_CAP |
+-	    CHERI_PERM_GLOBAL,
++	    CHERI_PERM_GLOBAL | CHERI_PERM_BLINDED,
+ 	    sv->sv_cheri_revoke_info_page, PAGE_SIZE, 0);
+ }
+diff --git a/sys/vm/vm_mmap.c b/sys/vm/vm_mmap.c
+index eaf1863cde2a..fa8e00fa32bb 100644
+--- a/sys/vm/vm_mmap.c
++++ b/sys/vm/vm_mmap.c
+@@ -45,6 +45,15 @@
+  * Mapped file (mmap) interface to VM
+  */
+ 
++  /**
++ * Changes for the blinded capability
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++
+ #include <sys/cdefs.h>
+ #include "opt_hwpmc_hooks.h"
+ #include "opt_ktrace.h"
+@@ -168,7 +177,7 @@ mmap_retcap(struct thread *td, vm_pointer_t addr,
+ 	KASSERT(cheri_gettag(addr), ("Expected valid capability"));
+ 	newcap = addr;
+ 	/* Enforce per-thread mmap capability permission */
+-	newcap = cheri_andperm(newcap, cheri_getperm(mrp->mr_source_cap));
++	newcap = cheri_andperm(newcap, cheri_getperm(mrp->mr_source_cap) | CHERI_PERM_BLINDED);
+ #else
+ 	newcap = (uintcap_t)mrp->mr_source_cap;
+ 	if (mrp->mr_flags & MAP_FIXED) {
+@@ -209,7 +218,7 @@ mmap_retcap(struct thread *td, vm_pointer_t addr,
+ 	 * range of access subject to page permissions.
+ 	 */
+ 	perms = ~CHERI_PROT2PERM_MASK | vm_map_prot2perms(cap_prot);
+-	newcap = cheri_andperm(newcap, perms);
++	newcap = cheri_andperm(newcap, perms | CHERI_PERM_BLINDED);
+ 
+ 	return (newcap);
+ }

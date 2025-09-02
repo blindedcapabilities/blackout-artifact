@@ -1,0 +1,8 @@
+# Log for ELF: sha2_spec_baseline_25.elf
+# Timestamp: 2025-07-26 23:29:18.609439
+
+Mode: 0, input: 25
+75s/25c
+work time   :[18170887]
+encrypt time:[7246728]
+total time  :[25417615]

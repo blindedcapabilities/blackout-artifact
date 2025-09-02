@@ -1,0 +1,6 @@
+# for i in $(seq 1 5); do time ./matrix_mult_18.o; done
+       61.59 real        59.84 user         0.81 sys
+       61.70 real        59.81 user         0.94 sys
+       62.24 real        60.44 user         0.84 sys
+       61.64 real        59.73 user         0.96 sys
+       61.72 real        60.00 user         0.77 sys

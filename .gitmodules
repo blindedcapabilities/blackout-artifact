@@ -1,0 +1,3 @@
+[submodule "blinded-cheri-sw"]
+	path = blinded-cheri-sw
+	url = git@github.com:blindedcapabilities/blinded-cheri-sw.git

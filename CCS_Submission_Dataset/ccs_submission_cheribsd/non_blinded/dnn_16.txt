@@ -1,0 +1,11 @@
++ time ./risc_oblivious_nonblinded/dnn_16.o
+        0.78 real         0.39 user         0.34 sys
+        0.78 real         0.45 user         0.28 sys
+        0.78 real         0.53 user         0.20 sys
+        0.78 real         0.46 user         0.28 sys
+        0.78 real         0.38 user         0.35 sys
+        0.78 real         0.47 user         0.26 sys
+        0.78 real         0.42 user         0.31 sys
+        0.78 real         0.48 user         0.25 sys
+        0.78 real         0.41 user         0.32 sys
+        0.78 real         0.50 user         0.24 sys

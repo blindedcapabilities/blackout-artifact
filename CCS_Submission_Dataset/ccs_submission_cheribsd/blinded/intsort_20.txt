@@ -1,0 +1,21 @@
+# for i in $(seq 1 20); do time ./int_sort_20.o; done
+       96.29 real        94.52 user         0.83 sys
+       96.31 real        94.55 user         0.81 sys
+       96.44 real        94.70 user         0.78 sys
+       96.44 real        94.67 user         0.80 sys
+       96.31 real        94.59 user         0.77 sys
+       96.31 real        94.54 user         0.83 sys
+       96.39 real        94.67 user         0.78 sys
+       96.41 real        94.63 user         0.82 sys
+       96.38 real        94.60 user         0.82 sys
+       96.43 real        94.64 user         0.83 sys
+       96.43 real        94.70 user         0.77 sys
+       96.46 real        94.67 user         0.83 sys
+       96.28 real        94.49 user         0.85 sys
+       96.44 real        94.68 user         0.80 sys
+       96.44 real        94.66 user         0.83 sys
+       96.43 real        94.64 user         0.83 sys
+       96.44 real        94.71 user         0.77 sys
+       96.37 real        94.61 user         0.82 sys
+       96.42 real        94.65 user         0.80 sys
+       96.38 real        94.64 user         0.80 sys

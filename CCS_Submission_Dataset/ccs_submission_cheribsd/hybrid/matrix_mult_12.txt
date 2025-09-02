@@ -1,0 +1,6 @@
+# for i in $(seq 1 5); do time ./matrix_mult_12.o; done 
+        0.32 real         0.10 user         0.16 sys
+        0.28 real         0.13 user         0.11 sys
+        0.29 real         0.11 user         0.14 sys
+        0.28 real         0.08 user         0.17 sys
+        0.29 real         0.10 user         0.15 sys

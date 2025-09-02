@@ -1,0 +1,11 @@
++ time ./risc_oblivious_hybrid/dnn_18.o
+        1.82 real         1.24 user         0.51 sys
+        2.16 real         1.57 user         0.53 sys
+        1.80 real         1.23 user         0.52 sys
+        1.81 real         1.22 user         0.52 sys
+        1.81 real         1.22 user         0.53 sys
+        2.15 real         1.63 user         0.47 sys
+        1.81 real         1.25 user         0.51 sys
+        1.81 real         1.30 user         0.45 sys
+        1.80 real         1.28 user         0.47 sys
+        1.80 real         1.19 user         0.55 sys

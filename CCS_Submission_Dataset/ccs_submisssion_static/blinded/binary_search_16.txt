@@ -1,0 +1,11 @@
++ time ./riscv_oblivious_blinded/binary_search_16.o
+        0.32 real         0.03 user         0.19 sys
+        0.22 real         0.04 user         0.14 sys
+        0.22 real         0.02 user         0.16 sys
+        0.22 real         0.04 user         0.14 sys
+        0.22 real         0.08 user         0.11 sys
+        0.33 real         0.03 user         0.20 sys
+        0.22 real         0.04 user         0.14 sys
+        0.22 real         0.05 user         0.13 sys
+        0.22 real         0.05 user         0.13 sys
+        0.22 real         0.05 user         0.13 sys

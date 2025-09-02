@@ -1,0 +1,578 @@
+diff --git a/CHERICC_Fat.bsv b/CHERICC_Fat.bsv
+index 2527c84..b24b249 100644
+--- a/CHERICC_Fat.bsv
++++ b/CHERICC_Fat.bsv
+@@ -35,6 +35,7 @@ import CHERICap     :: *;
+ 
+ export CapMem;
+ export CapReg;
++export BlindedCapReg;
+ export CapPipe;
+ 
+ export CapFat;
+@@ -115,6 +116,7 @@ typedef Bit#(TAdd#(CapAddrW,1)) CapAddrPlus1;
+ typedef Bit#(TAdd#(CapAddrW,2)) CapAddrPlus2;
+ // The Hardware permissions type
+ typedef struct {
++  Bool permit_blinded_cap;
+   Bool permit_set_CID;
+   Bool access_sys_regs;
+   Bool permit_unseal;
+@@ -127,7 +129,7 @@ typedef struct {
+   Bool permit_load;
+   Bool permit_execute;
+   Bool non_ephemeral;
+-} HPerms deriving(Bits, Eq, FShow); // 12 bits
++} HPerms deriving(Bits, Eq, FShow); // 13 bits
+ // The permissions field, including both "soft" and "hard" permission bits.
+ typedef struct {
+   Bit#(UPermW) soft;
+@@ -1024,7 +1026,14 @@ typedef Bit #(TAdd #(1, CapW)) CapMem;
+ typedef CapFat CapReg;
+ 
+ typedef struct {
+-  CapFat capFat;
++  Bool           isBlinded;
++  CapReg         capReg;
++} BlindedCapReg deriving (Bits);
++
++typedef struct {
++  // Bool isBlinded;
++  // CapFat capFat;
++  BlindedCapReg blindedCapReg;
+   TempFields tempFields;
+ } CapPipe deriving (Bits);
+ 
+@@ -1047,6 +1056,11 @@ instance CHERICap #(CapMem, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
+     return pack (cap);
+   endfunction
+ 
++  // blinded bit
++  function setBlinded = error ("setBlinded not implemented for CapMem");
++  function getBlinded = error ("getBlinded not implemented for CapMem");
++  function getAddrUnsafe = error ("getAddrUnsafe not implemented for CapMem");
++
+   // capability flags
+   //////////////////////////////////////////////////////////////////////////////
+   function getFlags (capMem);
+@@ -1064,7 +1078,8 @@ instance CHERICap #(CapMem, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
+   function getHardPerms (capMem);
+     CapabilityInMemory cap = unpack (capMem);
+     return HardPerms {
+-      permitSetCID:        cap.perms.hard.permit_set_CID
++      permitBlindedCap:    cap.perms.hard.permit_blinded_cap
++    , permitSetCID:        cap.perms.hard.permit_set_CID
+     , accessSysRegs:       cap.perms.hard.access_sys_regs
+     , permitUnseal:        cap.perms.hard.permit_unseal
+     , permitCCall:         cap.perms.hard.permit_ccall
+@@ -1165,16 +1180,21 @@ instance CHERICap #(CapMem, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
+ endinstance
+ 
+ instance FShow #(CapPipe);
+-  function fshow(cap) = $format(
+-                        "v: ", fshow(isValidCap(cap)),
+-                        " a: ", fshow(getAddr(cap)),
+-                        " o: ", fshow(getOffset(cap)),
+-                        " b: ", fshow(getBase(cap)),
+-                        " t: ", fshow(getTop(cap)),
+-                        " sp: ", fshow(pack(getSoftPerms(cap))),
+-                        " hp: ", fshow(pack(getHardPerms(cap))),
+-                        " ot: ", fshow(cap.capFat.otype),
+-                        " f: ", fshow(getFlags(cap)));
++  function fshow(cap);
++    CapPipe revealedCap = cap;
++    revealedCap.blindedCapReg.isBlinded = False;
++    return $format(
++                        "bl: ", fshow(cap.blindedCapReg.isBlinded),
++                        " v: ", fshow(isValidCap(cap)),
++                        " a: ", fshow(getAddr(revealedCap)),
++                        " o: ", fshow(getOffset(revealedCap)),
++                        " b: ", fshow(getBase(revealedCap)),
++                        " t: ", fshow(getTop(revealedCap)),
++                        " sp: ", fshow(pack(getSoftPerms(revealedCap))),
++                        " hp: ", fshow(pack(getHardPerms(revealedCap))),
++                        " ot: ", fshow(revealedCap.blindedCapReg.capReg.otype),
++                        " f: ", fshow(getFlags(revealedCap)));
++  endfunction
+ endinstance
+ 
+ instance Eq #(CapPipe);
+@@ -1201,6 +1221,11 @@ instance CHERICap #(CapReg, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
+     return cap;
+   endfunction
+ 
++  // blinded bit
++  function setBlinded = error ("setBlinded not implemented for CapReg");
++  function getBlinded = error ("getBlinded not implemented for CapReg");
++  function getAddrUnsafe = error ("getAddrUnsafe not implemented for CapReg");
++
+   // capability flags
+   //////////////////////////////////////////////////////////////////////////////
+   function getFlags (cap) = cap.flags;
+@@ -1212,7 +1237,8 @@ instance CHERICap #(CapReg, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
+   // capability permissions
+   //////////////////////////////////////////////////////////////////////////////
+   function getHardPerms (cap) = HardPerms {
+-      permitSetCID:        cap.perms.hard.permit_set_CID
++      permitBlindedCap:    cap.perms.hard.permit_blinded_cap
++    , permitSetCID:        cap.perms.hard.permit_set_CID
+     , accessSysRegs:       cap.perms.hard.access_sys_regs
+     , permitUnseal:        cap.perms.hard.permit_unseal
+     , permitCCall:         cap.perms.hard.permit_ccall
+@@ -1226,7 +1252,8 @@ instance CHERICap #(CapReg, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
+     , global:              cap.perms.hard.non_ephemeral };
+   function setHardPerms (cap, perms);
+     cap.perms.hard = HPerms {
+-      permit_set_CID:             perms.permitSetCID
++      permit_blinded_cap:         perms.permitBlindedCap 
++    , permit_set_CID:             perms.permitSetCID
+     , access_sys_regs:            perms.accessSysRegs
+     , permit_unseal:              perms.permitUnseal
+     , permit_ccall:               perms.permitCCall
+@@ -1339,47 +1366,229 @@ instance CHERICap #(CapReg, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
+ 
+ endinstance
+ 
++// BlindedCapReg CHERICap instance
++////////////////////////////////////////////////////////////////////////////////
++// Note: commented out methods have a provided default implementation in the
++//       CHERICap typeclass definition
++
++function BlindedCapReg nullIfBlinded (BlindedCapReg x);
++  BlindedCapReg res = nullCap;
++  if (!x.isBlinded)
++    res = x;
++  return res;
++endfunction
++
++instance CHERICap #(BlindedCapReg, OTypeW, FlagsW, CapAddrW, CapW, TSub #(MW, 3));
++
++  // capability validity
++  //////////////////////////////////////////////////////////////////////////////
++  function isValidCap (x) = !x.isBlinded && x.capReg.isCapability;
++  function setValidCap (cap, tag);
++    if (tag)
++      cap = nullIfBlinded(cap);
++    cap.capReg.isCapability = tag;
++    return cap;
++  endfunction
++
++  // blinded bit
++  function setBlinded (x);
++    x.isBlinded = True;
++    return x;
++  endfunction
++  function getBlinded (x) = x.isBlinded;
++  function getAddrUnsafe (x);
++    BlindedCapReg res = x;
++    res.isBlinded = False;
++    return getAddr(res);
++  endfunction
++
++  // capability flags
++  //////////////////////////////////////////////////////////////////////////////
++  function getFlags (cap) = nullIfBlinded(cap).capReg.flags;
++  function setFlags (cap, flags);
++    cap.capReg.flags = flags;
++    return cap;
++  endfunction
++
++  // capability permissions
++  //////////////////////////////////////////////////////////////////////////////
++  function getHardPerms (cap) = HardPerms {
++      permitBlindedCap:     nullIfBlinded(cap).capReg.perms.hard.permit_blinded_cap
++    , permitSetCID:        nullIfBlinded(cap).capReg.perms.hard.permit_set_CID
++    , accessSysRegs:       nullIfBlinded(cap).capReg.perms.hard.access_sys_regs
++    , permitUnseal:        nullIfBlinded(cap).capReg.perms.hard.permit_unseal
++    , permitCCall:         nullIfBlinded(cap).capReg.perms.hard.permit_ccall
++    , permitSeal:          nullIfBlinded(cap).capReg.perms.hard.permit_seal
++    , permitStoreLocalCap: nullIfBlinded(cap).capReg.perms.hard.permit_store_ephemeral_cap
++    , permitStoreCap:      nullIfBlinded(cap).capReg.perms.hard.permit_store_cap
++    , permitLoadCap:       nullIfBlinded(cap).capReg.perms.hard.permit_load_cap
++    , permitStore:         nullIfBlinded(cap).capReg.perms.hard.permit_store
++    , permitLoad:          nullIfBlinded(cap).capReg.perms.hard.permit_load
++    , permitExecute:       nullIfBlinded(cap).capReg.perms.hard.permit_execute
++    , global:              nullIfBlinded(cap).capReg.perms.hard.non_ephemeral };
++  function setHardPerms (cap, perms);
++    cap.capReg.perms.hard = HPerms {
++      permit_blinded_cap:         perms.permitBlindedCap
++    , permit_set_CID:             perms.permitSetCID
++    , access_sys_regs:            perms.accessSysRegs
++    , permit_unseal:              perms.permitUnseal
++    , permit_ccall:               perms.permitCCall
++    , permit_seal:                perms.permitSeal
++    , permit_store_ephemeral_cap: perms.permitStoreLocalCap
++    , permit_store_cap:           perms.permitStoreCap
++    , permit_load_cap:            perms.permitLoadCap
++    , permit_store:               perms.permitStore
++    , permit_load:                perms.permitLoad
++    , permit_execute:             perms.permitExecute
++    , non_ephemeral:              perms.global };
++    return cap;
++  endfunction
++  function getSoftPerms (cap) = zeroExtend (nullIfBlinded(cap).capReg.perms.soft);
++  function setSoftPerms (cap, perms);
++    cap.capReg.perms.soft = truncate (perms);
++    return cap;
++  endfunction
++  //function getPerms = error ("getPerms not implemented for BlindedCapReg");
++  //function setPerms = error ("setPerms not implemented for BlindedCapReg");
++
++  // capability kind
++  //////////////////////////////////////////////////////////////////////////////
++  function getKind (cap) = case (nullIfBlinded(cap).capReg.otype)
++    otype_unsealed: UNSEALED;
++    otype_sentry:   SENTRY;
++    otype_res0:     RES0;
++    otype_res1:     RES1;
++    default:        SEALED_WITH_TYPE (nullIfBlinded(cap).capReg.otype);
++  endcase;
++  function setKind (cap, kind) = case (kind) matches
++    tagged UNSEALED:             BlindedCapReg { isBlinded: False, capReg: unseal (nullIfBlinded(cap).capReg, ?) };
++    tagged SENTRY:               BlindedCapReg { isBlinded: False, capReg: seal (nullIfBlinded(cap).capReg, ?, VnD {v: True, d:otype_sentry}) };
++    tagged RES0:                 BlindedCapReg { isBlinded: False, capReg: seal (nullIfBlinded(cap).capReg, ?, VnD {v: True, d:otype_res0}) };
++    tagged RES1:                 BlindedCapReg { isBlinded: False, capReg: seal (nullIfBlinded(cap).capReg, ?, VnD {v: True, d:otype_res1}) };
++    tagged SEALED_WITH_TYPE .ot: BlindedCapReg { isBlinded: False, capReg: seal (nullIfBlinded(cap).capReg, ?, VnD {v: True, d:ot}) };
++  endcase;
++  function validAsType (dummy, checkType);
++    CapMem nullC = nullCap;
++    return validAsType (nullC, checkType);
++  endfunction
++
++  // capability in-memory architectural representation
++  //////////////////////////////////////////////////////////////////////////////
++  function getMeta (cap);
++    CapMem capMem = unpack (pack (toMem (cap)));
++    return getMeta (capMem);
++  endfunction
++  function getAddr (cap);
++    CapMem capMem = unpack (pack (toMem (cap)));
++    return getAddr (capMem);
++  endfunction
++  function fromMem (x) = cast (pack (x));
++  function toMem (x) = unpack (cast (x));
++
++  // capability address/offset manipulation
++  //////////////////////////////////////////////////////////////////////////////
++  function setAddr = error ("setAddr not implemented for BlindedCapReg");
++  function setAddrUnsafe (cap, address) = BlindedCapReg { isBlinded: False, capReg: setCapPointer (nullIfBlinded(cap).capReg, address) };
++  function addAddrUnsafe (cap, inc) =
++    setAddrUnsafe (cap, getAddr (cap) + signExtend (inc));
++  function maskAddr (cap, mask) = BlindedCapReg { isBlinded: False, capReg: setCapPointer (nullIfBlinded(cap).capReg, cap.capReg.address & {~0, mask}) };
++  function getOffset = error ("getOffset not implemented for BlindedCapReg");
++  function modifyOffset = error ("modifyOffset not implemented for BlindedCapReg");
++  //function setOffset = error ("setOffset not implemented for BlindedCapReg");
++  //function incOffset = error ("incOffset not implemented for BlindedCapReg");
++
++  // capability architectural bounds queries
++  //////////////////////////////////////////////////////////////////////////////
++  function getBoundsInfo = error ("getBoundsInfo not implemented for BlindedCapReg");
++  //function getBase = error ("getBase not implemented for BlindedCapReg");
++  //function getTop = error ("getTop not implemented for BlindedCapReg");
++  //function getLength = error ("getLength not implemented for BlindedCapReg");
++  //function isInBounds = error ("isInBounds not implemented for BlindedCapReg");
++  //function getRepBase = error ("getRepBase not implemented for BlindedCapReg");
++  //function getRepTop = error ("getRepTop not implemented for BlindedCapReg");
++  //function getRepLength = error ("getRepLength not implemented for BlindedCapReg");
++  //function isInRepBounds = error ("isInRepBounds not implemented for BlindedCapReg");
++  function getBaseAlignment (cap) =
++    // If cap exp is non-zero, we have internal exponent, so the least
++    // significant two bits of the base are implicitly zero.  Otherwise, we
++    // have a zero exponent, so the least significant two bits of the base are
++    // the least significant bits of the encoded base
++    (nullIfBlinded(cap).capReg.bounds.exp == 0) ? nullIfBlinded(cap).capReg.bounds.baseBits[1:0] : 2'b0;
++
++  // capability derivation (bounds set)
++  //////////////////////////////////////////////////////////////////////////////
++  function setBoundsCombined (cap, length) = error ("setBoundsCombined not implemented for BlindedCapReg");
++  //function setBounds = error ("setBounds not implemented for BlindedCapReg");
++  //function roundLength = error ("roundLength not implemented for BlindedCapReg");
++  //function alignmentMask = error ("alignmentMask not implemented for BlindedCapReg");
++
++  // common capabilities
++  //////////////////////////////////////////////////////////////////////////////
++  //function nullCap = error ("nullCap not implemented for BlindedCapReg");
++  function nullWithAddr (addr) = BlindedCapReg { isBlinded: False, capReg: setAddrUnsafe (null_cap, addr) };
++  function almightyCap = BlindedCapReg { isBlinded: False, capReg: defaultCapFat };
++  function nullCapFromDummy (x) = BlindedCapReg { isBlinded: False, capReg: null_cap };
++
++  // Assert that the encoding is valid
++  //////////////////////////////////////////////////////////////////////////////
++  function isDerivable (cap) =
++        (nullIfBlinded(cap).capReg.bounds.exp <= resetExp)
++    && !(   (nullIfBlinded(cap).capReg.bounds.exp == resetExp)
++         && (   (truncateLSB (nullIfBlinded(cap).capReg.bounds.topBits)  != 1'b0)
++             || (truncateLSB (nullIfBlinded(cap).capReg.bounds.baseBits) != 2'b0) ))
++    && !(   (nullIfBlinded(cap).capReg.bounds.exp == resetExp-1)
++         && (truncateLSB (nullIfBlinded(cap).capReg.bounds.baseBits) != 1'b0))
++    &&  (nullIfBlinded(cap).capReg.reserved == 0);
++
++endinstance
++
+ instance CHERICap #(CapPipe, OTypeW, FlagsW, CapAddrW, CapW, TSub#(MW, 3));
+ 
+-  //Functions supported by CapReg are just passed through
++  //Functions supported by BlindedCapReg are just passed through
+ 
+-  function isValidCap (x) = isValidCap(x.capFat);
++  function isValidCap (x) = isValidCap(x.blindedCapReg);
+   function setValidCap (cap, tag) =
+-    CapPipe { capFat: setValidCap(cap.capFat, tag)
++    CapPipe { blindedCapReg: setValidCap(cap.blindedCapReg, tag)
+             , tempFields: cap.tempFields };
+-  function getFlags (cap) = getFlags(cap.capFat);
++  function setBlinded(cap) =
++    CapPipe { blindedCapReg: setBlinded(cap.blindedCapReg)
++            , tempFields: cap.tempFields };
++  function getBlinded(cap) = getBlinded(cap.blindedCapReg);
++  function getAddrUnsafe (cap) = getAddrUnsafe (cap.blindedCapReg);
++  function getFlags (cap) = getFlags(cap.blindedCapReg);
+   function setFlags (cap, flags) =
+-    CapPipe { capFat: setFlags(cap.capFat, flags)
++    CapPipe { blindedCapReg: setFlags(cap.blindedCapReg, flags)
+             , tempFields: cap.tempFields };
+-  function getHardPerms (cap) = getHardPerms(cap.capFat);
++  function getHardPerms (cap) = getHardPerms(cap.blindedCapReg);
+   function setHardPerms (cap, perms) =
+-    CapPipe { capFat: setHardPerms(cap.capFat, perms)
++    CapPipe { blindedCapReg: setHardPerms(cap.blindedCapReg, perms)
+             , tempFields: cap.tempFields };
+-  function getSoftPerms (cap) = getSoftPerms(cap.capFat);
++  function getSoftPerms (cap) = getSoftPerms(cap.blindedCapReg);
+   function setSoftPerms (cap, perms) =
+-    CapPipe { capFat: setSoftPerms(cap.capFat, perms)
++    CapPipe { blindedCapReg: setSoftPerms(cap.blindedCapReg, perms)
+             , tempFields: cap.tempFields };
+-  function getKind (cap) = getKind(cap.capFat);
++  function getKind (cap) = getKind(cap.blindedCapReg);
+   function setKind (cap, kind) =
+-    CapPipe { capFat:setKind(cap.capFat,kind)
++    CapPipe { blindedCapReg:setKind(cap.blindedCapReg,kind)
+             , tempFields: cap.tempFields };
+ 
+-  function getMeta (cap) = getMeta (cap.capFat);
+-  function getAddr (cap) = getAddr (cap.capFat);
++  function getMeta (cap) = getMeta (cap.blindedCapReg);
++  function getAddr (cap) = getAddr (cap.blindedCapReg);
+   function maskAddr (cap, mask) =
+-    CapPipe { capFat: maskAddr(cap.capFat, mask)
++    CapPipe { blindedCapReg: maskAddr(cap.blindedCapReg, mask)
+             , tempFields: cap.tempFields };
+   function validAsType (dummy, checkType) =
+-    validAsType(dummy.capFat, checkType);
+-  function toMem (cap) = toMem(cap.capFat);
+-  function getBaseAlignment (cap) = getBaseAlignment(cap.capFat);
++    validAsType(dummy.blindedCapReg, checkType);
++  function toMem (cap) = toMem(cap.blindedCapReg);
++  function getBaseAlignment (cap) = getBaseAlignment(cap.blindedCapReg);
+ 
+-  //Functions supported by CapReg but which require TempFields to be changed
++  //Functions supported by BlindedCapReg but which require TempFields to be changed
+ 
+   function setBoundsCombined (cap, length);
+-    let result = setBoundsFat(cap.capFat, length, cap.tempFields);
++    let result = setBoundsFat(nullIfBlinded(cap.blindedCapReg).capReg, length, cap.tempFields);
++    let bcr = BlindedCapReg { isBlinded: cap.blindedCapReg.isBlinded, capReg: result.cap };
+     return SetBoundsReturn {
+-        cap: CapPipe { capFat: result.cap
++        cap: CapPipe { blindedCapReg: bcr
+                      , tempFields: getTempFields(result.cap) }
+       , exact: result.exact
+       , inBounds: result.inBounds
+@@ -1388,68 +1597,70 @@ instance CHERICap #(CapPipe, OTypeW, FlagsW, CapAddrW, CapW, TSub#(MW, 3));
+   endfunction
+ 
+   function nullWithAddr (addr);
+-    CapReg res = nullWithAddr(addr);
+-    return CapPipe { capFat: res, tempFields: getTempFields(res) };
++    BlindedCapReg res = nullWithAddr(addr);
++    return CapPipe { blindedCapReg: res, tempFields: getTempFields(res.capReg) };
+   endfunction
+ 
+   function fromMem (capBits);
+-    CapReg res = fromMem(capBits);
+-    return CapPipe { capFat: res, tempFields: getTempFields(res) };
++    BlindedCapReg res = fromMem(capBits);
++    return CapPipe { blindedCapReg: res, tempFields: getTempFields(nullIfBlinded(res).capReg) };
+   endfunction
+ 
+   function almightyCap;
+-    CapReg res = almightyCap;
+-    return CapPipe { capFat: res, tempFields: getTempFields(res) };
++    BlindedCapReg res = almightyCap;
++    return CapPipe { blindedCapReg: res, tempFields: getTempFields(res.capReg) };
+   endfunction
+ 
+   function nullCapFromDummy (x);
+-    CapReg res = nullCap;
+-    return CapPipe { capFat: res, tempFields: getTempFields(res) };
++    BlindedCapReg res = nullCap;
++    return CapPipe { blindedCapReg: res, tempFields: getTempFields(res.capReg) };
+   endfunction
+ 
+   //Functions that require TempFields
+ 
+   function setAddr (cap, address);
+-    let result = setAddress(cap.capFat, address, cap.tempFields);
+-    cap.capFat = result.d;
+-    cap.tempFields = getTempFields(cap.capFat);
++    let result = setAddress(nullIfBlinded(cap.blindedCapReg).capReg, address, cap.tempFields);
++    cap.blindedCapReg.isBlinded = cap.blindedCapReg.isBlinded;
++    cap.blindedCapReg.capReg = result.d;
++    cap.tempFields = getTempFields(nullIfBlinded(cap.blindedCapReg).capReg);
+     return Exact { exact: result.v, value: cap };
+   endfunction
+ 
+   function setAddrUnsafe (cap, address);
+-    cap.capFat = setAddrUnsafe(cap.capFat, address);
+-    cap.tempFields = getTempFields(cap.capFat);
++    cap.blindedCapReg = setAddrUnsafe(cap.blindedCapReg, address);
++    cap.tempFields = getTempFields(nullIfBlinded(cap.blindedCapReg).capReg);
+     return cap;
+   endfunction
+ 
+   function addAddrUnsafe (cap, inc) =
+     setAddrUnsafe(cap, getAddr(cap) + signExtend(inc));
+ 
+-  function getOffset (x) = getOffsetFat(x.capFat, x.tempFields);
++  function getOffset (x) = getOffsetFat(nullIfBlinded(x.blindedCapReg).capReg, x.tempFields);
+ 
+   function modifyOffset (cap, offset, doInc);
+-    let result = incOffsetFat( cap.capFat
+-                             , cap.capFat.address + offset
++    let result = incOffsetFat( nullIfBlinded(cap.blindedCapReg).capReg
++                             , nullIfBlinded(cap.blindedCapReg).capReg.address + offset
+                              , offset
+                              , cap.tempFields
+                              , !doInc);
+-    cap.capFat = result.d;
+-    cap.tempFields = getTempFields(cap.capFat);
++    cap.blindedCapReg.capReg = result.d;
++    cap.blindedCapReg.isBlinded = False;
++    cap.tempFields = getTempFields(nullIfBlinded(cap.blindedCapReg).capReg);
+     return Exact { exact: result.v, value: cap };
+   endfunction
+ 
+-  function getBoundsInfo (cap) = getBoundsInfoFat (cap.capFat, cap.tempFields);
++  function getBoundsInfo (cap) = getBoundsInfoFat (nullIfBlinded(cap.blindedCapReg).capReg, cap.tempFields);
+ 
+-  function getBase (cap) = getBotFat(cap.capFat, cap.tempFields);
++  function getBase (cap) = getBotFat(nullIfBlinded(cap.blindedCapReg).capReg, cap.tempFields);
+ 
+-  function getTop (cap) = getTopFat(cap.capFat, cap.tempFields);
++  function getTop (cap) = getTopFat(nullIfBlinded(cap.blindedCapReg).capReg, cap.tempFields);
+ 
+-  function getLength (cap) = getLengthFat(cap.capFat, cap.tempFields);
++  function getLength (cap) = getLengthFat(nullIfBlinded(cap.blindedCapReg).capReg, cap.tempFields);
+ 
+   function isInBounds (cap, inclusive) =
+-    capInBounds(cap.capFat, cap.tempFields, inclusive);
++    capInBounds(nullIfBlinded(cap.blindedCapReg).capReg, cap.tempFields, inclusive);
+ 
+-  function isDerivable (cap) = isDerivable(cap.capFat);
++  function isDerivable (cap) = isDerivable(nullIfBlinded(cap.blindedCapReg).capReg);
+ 
+ endinstance
+ 
+@@ -1461,26 +1672,44 @@ instance Cast#(CapReg, CapMem);
+   function CapMem cast (CapReg fat) = packCap(fat) ^ packCap(null_cap);
+ endinstance
+ 
++instance Cast#(CapMem, BlindedCapReg);
++  function BlindedCapReg cast (CapMem thin) = BlindedCapReg { isBlinded: False, capReg: unpackCap(thin ^ packCap(null_cap)) };
++endinstance
++
++instance Cast#(BlindedCapReg, CapMem);
++  function CapMem cast (BlindedCapReg fat) = packCap(fat.capReg) ^ packCap(null_cap);
++endinstance
++
+ instance Cast#(CapReg, CapPipe);
+   function CapPipe cast (CapReg thin) =
+-    CapPipe { capFat: thin
++    CapPipe { blindedCapReg: BlindedCapReg { isBlinded: False, capReg: thin }
+             , tempFields: getTempFields(thin) };
+ endinstance
+ 
+ instance Cast#(CapPipe, CapReg);
+-  function CapReg cast (CapPipe fat) = fat.capFat;
++  function CapReg cast (CapPipe fat) = nullIfBlinded(fat.blindedCapReg).capReg;
++endinstance
++
++instance Cast#(BlindedCapReg, CapPipe);
++  function CapPipe cast (BlindedCapReg thin) =
++    CapPipe { blindedCapReg: thin
++            , tempFields: getTempFields(nullIfBlinded(thin).capReg) };
++endinstance
++
++instance Cast#(CapPipe, BlindedCapReg);
++  function BlindedCapReg cast (CapPipe fat) = fat.blindedCapReg; //BlindedCapReg { isBlinded: False, capReg: fat.blindedCapReg };
+ endinstance
+ 
+ instance Cast#(CapMem, CapPipe);
+   function CapPipe cast (CapMem thin);
+-    CapReg cr = cast(thin);
++    BlindedCapReg cr = cast(thin);
+     return cast(cr);
+   endfunction
+ endinstance
+ 
+ instance Cast#(CapPipe, CapMem);
+   function CapMem cast (CapPipe fat);
+-    CapReg cr = cast(fat);
++    BlindedCapReg cr = cast(fat);
+     return cast(cr);
+   endfunction
+ endinstance
+@@ -1492,6 +1721,13 @@ instance Cast#(function CapReg f0(t x), function CapPipe f1(t y));
+   endfunction
+ endinstance
+ 
++instance Cast#(function BlindedCapReg f0(t x), function CapPipe f1(t y));
++  function cast(f0);
++    function CapPipe f1(t arg) = cast(f0(arg));
++    return f1;
++  endfunction
++endinstance
++
+ instance Cast#(function CapPipe f0(t y), function Bit#(CapAddrW) f1(t x));
+   function cast(f0);
+     function Bit#(CapAddrW) f1(t arg) = getAddr(f0(arg));
+diff --git a/CHERICap.bsv b/CHERICap.bsv
+index 2f6d5a4..a800b83 100644
+--- a/CHERICap.bsv
++++ b/CHERICap.bsv
+@@ -37,6 +37,7 @@ package CHERICap;
+ typedef Bit #(16) SoftPerms;
+ 
+ typedef struct {
++  Bool permitBlindedCap;
+   Bool permitSetCID;
+   Bool accessSysRegs;
+   Bool permitUnseal;
+@@ -163,6 +164,13 @@ typeclass CHERICap #( type capT              // type of the CHERICap capability
+   function Bool isValidCap (capT cap);
+   // Set the capability as valid. All fields left unchanged
+   function capT setValidCap (capT cap, Bool valid);
++  
++  // set blinded bit to True
++  function capT setBlinded (capT cap);
++  // check blindedness bit
++  function Bool getBlinded (capT cap);
++  // get addr field without nullifying if blinded (UNSAFE!)
++  function Bit #(addrW) getAddrUnsafe (capT cap);
+ 
+   // capability flags
+   //////////////////////////////////////////////////////////////////////////////
+@@ -185,10 +193,10 @@ typeclass CHERICap #( type capT              // type of the CHERICap capability
+   function capT setSoftPerms (capT cap, SoftPerms softperms);
+   // Get the architectural permissions
+   function Bit #(31) getPerms (capT cap) =
+-    zeroExtend ({pack (getSoftPerms (cap)), 3'h0, pack (getHardPerms (cap))});
++    zeroExtend ({pack (getSoftPerms (cap)), 2'h0, pack (getHardPerms (cap))});
+   // Set the architectural permissions
+   function capT setPerms (capT cap, Bit #(31) perms) =
+-    setSoftPerms ( setHardPerms (cap, unpack (perms[11:0]))
++    setSoftPerms ( setHardPerms (cap, unpack (perms[12:0]))
+                  , unpack (truncate (perms[30:15])) );
+ 
+   // capability kind

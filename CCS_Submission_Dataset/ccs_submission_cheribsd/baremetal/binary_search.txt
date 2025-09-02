@@ -1,0 +1,94 @@
+
+### BLINDED 
+
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_12_blinded.elf
+Mean time: 24619
+Variance: 0
+Exit code 0
+
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb
+$(HOME)/cheri/blinded-cheri-sw/binary_search_14_blinded.elf
+
+Mean time: 98360
+Variance: 19
+Exit code 0
+
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb
+$(HOME)/cheri/blinded-cheri-sw/binary_search_16_blinded.elf
+
+Mean time: 393323
+Variance: 2420                                                                                                 
+Exit code 0
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb
+$(HOME)/cheri/blinded-cheri-sw/binary_search_18_blinded.elf
+
+Mean time: 1573081
+Variance: 27212
+Exit code 0
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb
+$(HOME)/cheri/blinded-cheri-sw/binary_search_20_blinded.elf
+
+Mean time: 6340779
+Variance: 106252
+Exit code 0
+
+
+### NON BLINDED
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_12_nonblinded.elf
+Mean time: 24619
+Variance: 0
+Exit code 0
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_14_nonblinded.elf
+Mean time: 98360
+Variance: 18
+Exit code 0
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_16_nonblinded.elf                                                                                                Exit code 0
+Mean time: 393316
+Variance: 2348
+Exit code
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_18_nonblinded.elf                                                                                                Exit code 0
+
+Mean time: 1573085
+Variance: 28634
+Exit code 0
+
+$(HOME)/opt/riscv/bin/riscv64-unknown-elf-gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_20_nonblinded.elf
+Mean time: 6340766
+Variance: 113758
+Exit code 0
+                                                                                                                                                                                          
+
+
+#### Hybrid 
+
+./gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_12_hybrid.elf
+Mean time: 22565
+Variance: 0
+
+./gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_14_hybrid.elf
+Mean time: 90158
+Variance: 0
+
+  
+./gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_16_hybrid.elf
+Mean time: 360494
+Variance: 1
+
+./gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_18_hybrid.elf
+Mean time: 1441862
+Variance: 1931
+
+
+./gdb $(HOME)/cheri/blinded-cheri-sw/binary_search_20_hybrid.elf
+Mean time: 5810305
+Variance: 57137
+

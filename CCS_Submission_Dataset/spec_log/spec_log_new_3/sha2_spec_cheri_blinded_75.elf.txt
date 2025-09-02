@@ -1,0 +1,9 @@
+# Log for ELF: sha2_spec_cheri_blinded_75.elf
+# Timestamp: 2025-07-26 23:09:25.988359
+
+Mode: 0, input: 75
+25s/75c
+work time   :[6713135]
+encrypt time:[18056448]
+total time  :[24769583]
+Exit code 0

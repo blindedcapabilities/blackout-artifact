@@ -1,0 +1,1257 @@
+diff --git a/blinded_cap_test/blinded_array.c b/blinded_cap_test/blinded_array.c
+new file mode 100644
+index 000000000000..84d5c71d98ec
+--- /dev/null
++++ b/blinded_cap_test/blinded_array.c
+@@ -0,0 +1,19 @@
++/**
++ * @author Merve Gulmez 
++ * 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++/* This is an array access to load, we blind the b*/
++
++__attribute__ ((optnone))
++int main(int argc, char *argv[]) {
++    int __blinded x[5];
++    x[3] = 0xfb;
++    int b = x[3]; 
++    if (b == 0xfa)
++        return(0xfb);
++    return 1;
++}
+\ No newline at end of file
+diff --git a/blinded_cap_test/blinded_cap.c b/blinded_cap_test/blinded_cap.c
+new file mode 100644
+index 000000000000..ebcb419fc7d1
+--- /dev/null
++++ b/blinded_cap_test/blinded_cap.c
+@@ -0,0 +1,20 @@
++/**
++ * @author Merve Gulmez 
++ * 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++/* Blinded propogation for simple test */
++
++
++__attribute__ ((optnone))
++int main(int argc, char *argv[]) {
++    int __blinded x;
++    x = 0xfb;
++    int b = x;
++    if (b == 0xfa)
++        return(0xfb);
++    return 1;
++} 
+diff --git a/blinded_cap_test/blinded_sequential.c b/blinded_cap_test/blinded_sequential.c
+new file mode 100644
+index 000000000000..142361c66e9c
+--- /dev/null
++++ b/blinded_cap_test/blinded_sequential.c
+@@ -0,0 +1,21 @@
++ /**
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++#include <cheric.h>
++
++#define __blinded [[clang::annotate_type("blinded")]]
++
++__attribute__ ((optnone))
++int main(int argc, char *argv[]) {
++    int __blinded x;
++    x = 0xfb;
++    int b = x;
++    int c = b; 
++    if (c == 0xfa)
++        return(0xfb);
++    return 1;
++} 
+diff --git a/blinded_cap_test/blinded_sequential_non_order.c b/blinded_cap_test/blinded_sequential_non_order.c
+new file mode 100644
+index 000000000000..823c0125fa85
+--- /dev/null
++++ b/blinded_cap_test/blinded_sequential_non_order.c
+@@ -0,0 +1,21 @@
++ /**
++ * @author Merve Gulmez 
++ * 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++
++#define __blinded [[clang::annotate_type("blinded")]]
++
++__attribute__ ((optnone))
++int main(int argc, char *argv[]) {
++    int b; 
++    int c; 
++    int __blinded x;
++    x = 0xfb;
++    if (c == 0xfa)
++        return(0xfb);
++    return 1;
++} 
+diff --git a/clang/include/clang/AST/TypeLoc.h b/clang/include/clang/AST/TypeLoc.h
+index b18448e10e0f..cbddf767cd05 100644
+--- a/clang/include/clang/AST/TypeLoc.h
++++ b/clang/include/clang/AST/TypeLoc.h
+@@ -11,6 +11,14 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * include the blinded attribute
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
+ #ifndef LLVM_CLANG_AST_TYPELOC_H
+ #define LLVM_CLANG_AST_TYPELOC_H
+ 
+@@ -227,7 +235,7 @@ public:
+   /// Find the location of the nullability specifier (__nonnull,
+   /// __nullable, or __null_unspecifier), if there is one.
+   SourceLocation findNullabilityLoc() const;
+-
++  unsigned getBlindedMask() const;
+ private:
+   static bool isKind(const TypeLoc&) {
+     return true;
+diff --git a/clang/lib/AST/TypeLoc.cpp b/clang/lib/AST/TypeLoc.cpp
+index 65c1aa1e734e..bd43ba016d2a 100644
+--- a/clang/lib/AST/TypeLoc.cpp
++++ b/clang/lib/AST/TypeLoc.cpp
+@@ -31,6 +31,29 @@
+ using namespace clang;
+ 
+ static const unsigned TypeLocMaxDataAlign = alignof(void *);
++unsigned TypeLoc::getBlindedMask() const {
++  auto TL = TypeLoc(*this);
++  uint64_t UninitMask = 0;
++  uint64_t NumIndirections = 0;
++  
++  while (TL) {
++    if (auto ATL = TL.getAsAdjusted<AttributedTypeLoc>()) {
++      if (ATL.getAttrKind() == attr::AnnotateType) {
++        const AnnotateTypeAttr *ATA = ATL.getAttrAs<AnnotateTypeAttr>();
++        if (ATA->getAnnotation().compare("blinded") == 0) {
++          UninitMask |= (1ull << NumIndirections);
++        }
++      }
++    }
++    
++    if (TL.getType()->isAnyPointerType() || TL.getType()->isArrayType()) {
++      NumIndirections++;
++    }
++    TL = TL.getNextTypeLoc();
++  }
++  
++  return UninitMask;
++}
+ 
+ //===----------------------------------------------------------------------===//
+ // TypeLoc Implementation
+diff --git a/clang/lib/Basic/Targets/RISCV.cpp b/clang/lib/Basic/Targets/RISCV.cpp
+index 828db1526810..00697016c06b 100644
+--- a/clang/lib/Basic/Targets/RISCV.cpp
++++ b/clang/lib/Basic/Targets/RISCV.cpp
+@@ -10,6 +10,14 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * include the blinded capability permission
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
+ #include "RISCV.h"
+ #include "clang/Basic/Diagnostic.h"
+ #include "clang/Basic/MacroBuilder.h"
+@@ -234,6 +242,7 @@ void RISCVTargetInfo::getTargetDefines(const LangOptions &Opts,
+     Builder.defineMacro("__CHERI_CAP_PERMISSION_PERMIT_INVOKE__", Twine(1<<8));
+     Builder.defineMacro("__CHERI_CAP_PERMISSION_PERMIT_UNSEAL__", Twine(1<<9));
+     Builder.defineMacro("__CHERI_CAP_PERMISSION_ACCESS_SYSTEM_REGISTERS__", Twine(1<<10));
++    Builder.defineMacro("__CHERI_CAP_PERMISSION_BLINDED_CAP__", Twine(1<<12));
+ 
+     Builder.defineMacro("__riscv_clen", Twine(getCHERICapabilityWidth()));
+     // TODO: _MIPS_CAP_ALIGN_MASK equivalent?
+diff --git a/clang/lib/CodeGen/CodeGenFunction.cpp b/clang/lib/CodeGen/CodeGenFunction.cpp
+index 8166a412e5ab..5540cdfcf756 100644
+--- a/clang/lib/CodeGen/CodeGenFunction.cpp
++++ b/clang/lib/CodeGen/CodeGenFunction.cpp
+@@ -10,6 +10,14 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * include the blinded attribute metadata
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
+ #include "CodeGenFunction.h"
+ #include "CGBlocks.h"
+ #include "CGCUDARuntime.h"
+@@ -468,6 +476,8 @@ void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
+   for (const auto &FuncletAndParent : TerminateFunclets)
+     EmitIfUsed(*this, FuncletAndParent.second);
+ 
++  EmitBlindedMetadata(); 
++  
+   if (CGM.getCodeGenOpts().EmitDeclMetadata)
+     EmitDeclMetadata();
+ 
+diff --git a/clang/lib/CodeGen/CodeGenFunction.h b/clang/lib/CodeGen/CodeGenFunction.h
+index ac5690945530..7847b1a54474 100644
+--- a/clang/lib/CodeGen/CodeGenFunction.h
++++ b/clang/lib/CodeGen/CodeGenFunction.h
+@@ -10,6 +10,15 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++
++ /**
++ * @author Merve Gulmez 
++ * include the blinded attribute metadata
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
+ #ifndef LLVM_CLANG_LIB_CODEGEN_CODEGENFUNCTION_H
+ #define LLVM_CLANG_LIB_CODEGEN_CODEGENFUNCTION_H
+ 
+@@ -4910,6 +4919,8 @@ private:
+ 
+   void EmitDeclMetadata();
+ 
++  void EmitBlindedMetadata();
++
+   BlockByrefHelpers *buildByrefHelpers(llvm::StructType &byrefType,
+                                   const AutoVarEmission &emission);
+ 
+diff --git a/clang/lib/CodeGen/CodeGenModule.cpp b/clang/lib/CodeGen/CodeGenModule.cpp
+index 81ec6cf2f566..6b7e2ee931b0 100644
+--- a/clang/lib/CodeGen/CodeGenModule.cpp
++++ b/clang/lib/CodeGen/CodeGenModule.cpp
+@@ -10,6 +10,14 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * include the blinded attribute metadata
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
+ #include "CodeGenModule.h"
+ #include "ABIInfo.h"
+ #include "CGBlocks.h"
+@@ -2907,6 +2915,23 @@ void CodeGenModule::AddGlobalAnnotations(const ValueDecl *D,
+     Annotations.push_back(EmitAnnotateAttr(GV, I, D->getLocation()));
+ }
+ 
++void CodeGenModule::AddGlobalBlindedAnnotations(const ValueDecl *D,
++                                                llvm::GlobalValue *GV) {
++  if (const auto *VD = dyn_cast<VarDecl>(D)) {
++    if (auto *SI = VD->getTypeSourceInfo()) {
++      if (auto TL = SI->getTypeLoc()) {
++        uint64_t BlindedMask = TL.getBlindedMask();
++        if (BlindedMask) {
++          if (auto *GVVar = dyn_cast<llvm::GlobalVariable>(GV)) {
++            GVVar->setSection(".blinded");
++          }
++        }
++      }
++    }
++  }
++}
++
++
+ bool CodeGenModule::isInNoSanitizeList(SanitizerMask Kind, llvm::Function *Fn,
+                                        SourceLocation Loc) const {
+   const auto &NoSanitizeL = getContext().getNoSanitizeList();
+@@ -4911,6 +4936,7 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
+   if (D->hasAttr<AnnotateAttr>())
+     AddGlobalAnnotations(D, GV);
+ 
++  AddGlobalBlindedAnnotations(D, GV);
+   // Set the llvm linkage type as appropriate.
+   llvm::GlobalValue::LinkageTypes Linkage =
+       getLLVMLinkageVarDefinition(D, GV->isConstant());
+@@ -6726,6 +6752,39 @@ void CodeGenModule::EmitDeclMetadata() {
+   }
+ }
+ 
++void CodeGenFunction::EmitBlindedMetadata() {
++  if (LocalDeclMap.empty()) return;
++
++  llvm::LLVMContext &Context = getLLVMContext();
++
++  unsigned BlindedKind = Context.getMDKindID("clang.var.blinded");
++
++  llvm::NamedMDNode *GlobalMetadata = nullptr;
++
++  for (auto &I : LocalDeclMap) {
++    const Decl *D = I.first;
++    llvm::Value *Addr = I.second.getPointer();
++    llvm::AllocaInst *Alloca = llvm::dyn_cast<llvm::AllocaInst>(Addr);
++
++    if (const clang::VarDecl *VD = clang::dyn_cast<clang::VarDecl>(D)) {
++        if (auto *SI = VD->getTypeSourceInfo()) {
++          if (auto TL = SI->getTypeLoc()) {
++            uint64_t BlindedMask = TL.getBlindedMask();
++            if (BlindedMask) {
++                // Is it a stack variable (alloca)?
++                if (auto *Alloca = dyn_cast<llvm::AllocaInst>(Addr)) {
++                  Alloca->setMetadata(BlindedKind, llvm::MDNode::get(Context, {}));
++                } else if (auto *Global = dyn_cast<llvm::GlobalVariable>(Addr)) {
++                  llvm::errs() << "Blinding global: " << Global->getName() << "\n";
++                  Global->setSection(".blinded");
++                }
++            }
++          }
++      }
++    }
++  }
++}
++
+ /// Emits metadata nodes for all the local variables in the current
+ /// function.
+ void CodeGenFunction::EmitDeclMetadata() {
+diff --git a/clang/lib/CodeGen/CodeGenModule.h b/clang/lib/CodeGen/CodeGenModule.h
+index 2bca99aa1fa3..2b3504025a8c 100644
+--- a/clang/lib/CodeGen/CodeGenModule.h
++++ b/clang/lib/CodeGen/CodeGenModule.h
+@@ -10,6 +10,14 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * include the blinded attribute metadata
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
+ #ifndef LLVM_CLANG_LIB_CODEGEN_CODEGENMODULE_H
+ #define LLVM_CLANG_LIB_CODEGEN_CODEGENMODULE_H
+ 
+@@ -1367,6 +1375,8 @@ public:
+   /// annotations are emitted during finalization of the LLVM code.
+   void AddGlobalAnnotations(const ValueDecl *D, llvm::GlobalValue *GV);
+ 
++  void AddGlobalBlindedAnnotations(const ValueDecl *D, llvm::GlobalValue *GV);
++
+   bool isInNoSanitizeList(SanitizerMask Kind, llvm::Function *Fn,
+                           SourceLocation Loc) const;
+ 
+diff --git a/clang/lib/Headers/cheri_init_globals.h b/clang/lib/Headers/cheri_init_globals.h
+index 630f2bd6abfd..b6903bb432e9 100644
+--- a/clang/lib/Headers/cheri_init_globals.h
++++ b/clang/lib/Headers/cheri_init_globals.h
+@@ -24,6 +24,14 @@
+  *
+ \*===----------------------------------------------------------------------===*/
+ 
++ /**
++ * @author Merve Gulmez 
++ * include the blinded capability global data section
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
+ #pragma once
+ #if !__has_feature(capabilities)
+ #error "This header requires CHERI capability support"
+@@ -68,6 +76,10 @@ static const __SIZE_TYPE__ global_pointer_permissions_mask =
+ __attribute__((weak)) extern struct capreloc __start___cap_relocs;
+ __attribute__((weak)) extern struct capreloc __stop___cap_relocs;
+ 
++
++__attribute__((weak))  extern char __start_blinded[];
++__attribute__((weak))  extern char __stop_blinded[];
++
+ __attribute__((weak)) extern void *__capability __cap_table_start;
+ __attribute__((weak)) extern void *__capability __cap_table_end;
+ 
+@@ -91,7 +103,7 @@ __attribute__((weak)) extern void *__capability __cap_table_end;
+ #define __STRINGIFY(x) __STRINGIFY2(x)
+ #define CGP_PERMISSIONS                                                        \
+   __STRINGIFY((__CHERI_CAP_PERMISSION_PERMIT_LOAD_CAPABILITY__ |               \
+-               __CHERI_CAP_PERMISSION_PERMIT_LOAD__))
++               __CHERI_CAP_PERMISSION_PERMIT_LOAD__ | __CHERI_CAP_PERMISSION_BLINDED_CAP__))
+ 
+ /* By default derive $cgp from $pcc on startup */
+ #ifndef GET_GCP_BASE_CAPABILITY
+@@ -151,13 +163,17 @@ __attribute__((weak)) extern void *__capability __cap_table_end;
+ #error Unknown architecture
+ #endif
+ 
++
++
+ static __attribute__((always_inline)) void
+ cheri_init_globals_impl(const struct capreloc *start_relocs,
+                         const struct capreloc *stop_relocs,
+                         void *__capability data_cap,
+                         const void *__capability code_cap,
+                         const void *__capability rodata_cap,
+-                        bool tight_code_bounds, __SIZE_TYPE__ base_addr) {
++                        bool tight_code_bounds, __SIZE_TYPE__ base_addr,
++                        const char *start_blinded,
++                        const char *stop_blinded) {
+   data_cap =
+       __builtin_cheri_perms_and(data_cap, global_pointer_permissions_mask);
+   code_cap =
+@@ -192,6 +208,10 @@ cheri_init_globals_impl(const struct capreloc *start_relocs,
+     if (can_set_bounds && (reloc->size != 0)) {
+       src = __builtin_cheri_bounds_set(src, reloc->size);
+     }
++    if((((reloc->object + base_addr)) <= (__SIZE_TYPE__)stop_blinded) && (((reloc->object + base_addr)) >= (__SIZE_TYPE__)start_blinded)) {
++      src = __builtin_cheri_perms_and(src, ~(__CHERI_CAP_PERMISSION_BLINDED_CAP__));
++    }
++
+     src = __builtin_cheri_offset_increment(src, reloc->offset);
+     if ((reloc->permissions & function_reloc_flag) == function_reloc_flag) {
+       /* Convert function pointers to sentries: */
+@@ -208,6 +228,7 @@ cheri_init_globals_3(void *__capability data_cap,
+   const struct capreloc *start_relocs;
+   const struct capreloc *stop_relocs;
+   __SIZE_TYPE__ start_addr, stop_addr;
++
+ #if defined(__mips__)
+   __asm__(".option pic0\n\t"
+           "dla %0, __start___cap_relocs\n\t"
+@@ -229,13 +250,39 @@ cheri_init_globals_3(void *__capability data_cap,
+ #endif
+ #else
+ #error Unknown architecture
++#endif
++
++  const char *start_blinded;
++  const char *stop_blinded;
++  __SIZE_TYPE__ start_blinded_addr, stop_blinded_addr;
++
++#if defined(__riscv)
++  #if !defined(__CHERI_PURE_CAPABILITY__)
++  __asm__("lla %0, __start_blinded\n\t"
++          "lla %1, __stop_blinded\n\t"
++          : "=r"(start_blinded_addr), "=r"(stop_blinded_addr));
++#else
++  __asm__ (
++       "cllc %2, __start_blinded\n\t"
++       cgetaddr_or_offset " %0, %2\n\t"
++       "cllc %2, __stop_blinded\n\t"
++       cgetaddr_or_offset " %1, %2\n\t"
++       :"=r"(start_blinded_addr), "=r"(stop_blinded_addr), "=&C"(tmp));
++#endif
++#else
++#error Unknown architecture
+ #endif
+ 
+ #if !defined(__CHERI_PURE_CAPABILITY__)
+   start_relocs = (const struct capreloc *)(__UINTPTR_TYPE__)start_addr;
+   stop_relocs = (const struct capreloc *)(__UINTPTR_TYPE__)stop_addr;
++  start_blinded = (const char *)(__UINTPTR_TYPE__)start_blinded_addr;
++  stop_blinded = (const char *)(__UINTPTR_TYPE__)stop_blinded_addr;
+ #else
+   __SIZE_TYPE__ relocs_size = stop_addr - start_addr;
++  __SIZE_TYPE__ blinded_size = stop_blinded_addr - start_blinded_addr;
++
++ 
+   /*
+    * Always get __cap_relocs relative to the initial $pcc. This should span
+    * rodata and rw data, too so we can access __cap_relocs, no matter where it
+@@ -244,6 +291,7 @@ cheri_init_globals_3(void *__capability data_cap,
+   start_relocs = (const struct capreloc *)cheri_address_or_offset_set(
+       __builtin_cheri_program_counter_get(), start_addr);
+   start_relocs = __builtin_cheri_bounds_set(start_relocs, relocs_size);
++
+   /*
+    * Note: with imprecise capabilities start_relocs could have a non-zero offset
+    * so we must not use setoffset!
+@@ -252,6 +300,12 @@ cheri_init_globals_3(void *__capability data_cap,
+   stop_relocs =
+       (const struct capreloc *)(const void *)((const char *)start_relocs +
+                                               relocs_size);
++
++  start_blinded = (const char *)cheri_address_or_offset_set(
++    __builtin_cheri_program_counter_get(), start_blinded_addr);
++  start_blinded = __builtin_cheri_bounds_set(start_blinded, blinded_size);
++  stop_blinded =
++      (const char *)start_blinded + blinded_size;
+ #endif
+ 
+ #if !defined(__CHERI_PURE_CAPABILITY__) || __CHERI_CAPABILITY_TABLE__ == 3
+@@ -266,7 +320,7 @@ cheri_init_globals_3(void *__capability data_cap,
+    * location of the capreloc.
+    */
+   cheri_init_globals_impl(start_relocs, stop_relocs, data_cap, code_cap,
+-                          rodata_cap, can_set_code_bounds, /*relocbase=*/0);
++                          rodata_cap, can_set_code_bounds, /*relocbase=*/0, start_blinded, stop_blinded);
+ }
+ 
+ static __attribute__((always_inline, unused)) void
+diff --git a/clang/lib/Headers/cheriintrin.h b/clang/lib/Headers/cheriintrin.h
+index b40142997107..81075ea03220 100644
+--- a/clang/lib/Headers/cheriintrin.h
++++ b/clang/lib/Headers/cheriintrin.h
+@@ -6,6 +6,16 @@
+  *
+  *===-----------------------------------------------------------------------===
+  */
++
++ /**
++ * @author Merve Gulmez 
++ * include the blinded capability permission
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++
+ #ifndef __CHERIINTRIN_H
+ #define __CHERIINTRIN_H
+ 
+@@ -81,6 +91,7 @@ typedef enum __attribute__((flag_enum, enum_extensibility(open))) {
+   CHERI_PERM_INVOKE = __CHERI_CAP_PERMISSION_PERMIT_INVOKE__,
+   CHERI_PERM_UNSEAL = __CHERI_CAP_PERMISSION_PERMIT_UNSEAL__,
+   CHERI_PERM_SYSTEM_REGS = __CHERI_CAP_PERMISSION_ACCESS_SYSTEM_REGISTERS__,
++  CHERI_PERM_BLINDED = __CHERI_CAP_PERMISSION_BLINDED_CAP__,
+   /* TODO: architecture-dependent permissions */
+ } cheri_perms_t;
+ #define cheri_perms_get(x) ((cheri_perms_t)(__builtin_cheri_perms_get(x)))
+diff --git a/lld/ELF/Options.td b/lld/ELF/Options.td
+index 76dd7f0b942f..147514bc66e3 100644
+--- a/lld/ELF/Options.td
++++ b/lld/ELF/Options.td
+@@ -706,9 +706,9 @@ def building_freebsd_rtld: F<"building-freebsd-rtld">,
+     HelpText<"Disallow any relocations that are not supported by _rtld_relocate_nonplt_self">;
+ defm relative_cap_relocs: B<"relative-cap-relocs",
+     "All __cap_relocs entries are relative to the load addresss (not compatible with -preemptible-caprelocs=legacy)",
+-    "Add dynamic relocations to write the full addresses to all __cap_relocs entries">;
++    "Add dynamic relocations to write the full addresses to all  entries">;
+ defm sort_cap_relocs: B<"sort-cap-relocs",
+-    "Sort the __cap_relocs section by capability location",
++    "Sort the  section by capability location",
+     "Do not sort the __cap_relocs section by capability location">, Flags<[HelpHidden]>;
+ def verbose_cap_relocs : F<"verbose-cap-relocs">, HelpText<"Print all cap_relocs information (this is a lot!)">;
+ 
+diff --git a/llvm/include/llvm/CodeGen/Passes.h b/llvm/include/llvm/CodeGen/Passes.h
+index 61ff10cbf75c..105aaac98391 100644
+--- a/llvm/include/llvm/CodeGen/Passes.h
++++ b/llvm/include/llvm/CodeGen/Passes.h
+@@ -11,6 +11,15 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * include the blinded capability passes
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++
+ #ifndef LLVM_CODEGEN_PASSES_H
+ #define LLVM_CODEGEN_PASSES_H
+ 
+@@ -513,9 +522,15 @@ namespace llvm {
+   /// Create Hardware Loop pass. \see HardwareLoops.cpp
+   FunctionPass *createHardwareLoopsPass();
+ 
++  /// Create CHERI pass to bound alloca.s
++  ModulePass *createCheriBlindedAnalysisPass();
++
+   /// Create CHERI pass to bound alloca.s
+   ModulePass *createCheriBoundAllocasPass();
+ 
++  /// Create CHERI pass to bound alloca.s
++  ModulePass *createCheriBlindedPass();
++
+   /// Create CHERI pass to remove capability address reading instructions.
+   FunctionPass *createCheriGetAddressElimPass();
+ 
+diff --git a/llvm/include/llvm/InitializePasses.h b/llvm/include/llvm/InitializePasses.h
+index a0efb01e62f6..8165e5cd770f 100644
+--- a/llvm/include/llvm/InitializePasses.h
++++ b/llvm/include/llvm/InitializePasses.h
+@@ -10,7 +10,14 @@
+ // for the entire LLVM project.
+ //
+ //===----------------------------------------------------------------------===//
+-
++ /**
++ * @author Merve Gulmez 
++ * include the blinded attribute metadata
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++ 
+ #ifndef LLVM_INITIALIZEPASSES_H
+ #define LLVM_INITIALIZEPASSES_H
+ 
+@@ -107,7 +114,9 @@ void initializeCallGraphWrapperPassPass(PassRegistry&);
+ void initializeCallSiteSplittingLegacyPassPass(PassRegistry&);
+ void initializeCalledValuePropagationLegacyPassPass(PassRegistry &);
+ void initializeCheckDebugMachineModulePass(PassRegistry &);
++void initializeCheriBlindedAnalysisPass(PassRegistry &);
+ void initializeCheriBoundAllocasPass(PassRegistry &);
++void initializeCheriBlindedPass(PassRegistry &);
+ void initializeCheriGetAddressElimPass(PassRegistry &);
+ void initializeCodeGenPreparePass(PassRegistry&);
+ void initializeConstantHoistingLegacyPassPass(PassRegistry&);
+diff --git a/llvm/lib/CodeGen/CMakeLists.txt b/llvm/lib/CodeGen/CMakeLists.txt
+index 8a227fb59466..4cd949ef7ca7 100644
+--- a/llvm/lib/CodeGen/CMakeLists.txt
++++ b/llvm/lib/CodeGen/CMakeLists.txt
+@@ -39,6 +39,8 @@ add_llvm_component_library(LLVMCodeGen
+   CFIFixup.cpp
+   CFIInstrInserter.cpp
+   CheriBoundAllocas.cpp
++  CheriBlinded.cpp
++  CheriBlindedAnalysis.cpp
+   CheriGetAddressElim.cpp
+   CodeGen.cpp
+   CodeGenCommonISel.cpp
+diff --git a/llvm/lib/CodeGen/CheriBlinded.cpp b/llvm/lib/CodeGen/CheriBlinded.cpp
+new file mode 100644
+index 000000000000..17db51cee868
+--- /dev/null
++++ b/llvm/lib/CodeGen/CheriBlinded.cpp
+@@ -0,0 +1,261 @@
++ /**
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++
++#include "llvm/ADT/Statistic.h"
++#include "llvm/ADT/StringSwitch.h"
++#include "llvm/Analysis/Utils/Local.h"
++#include "llvm/CodeGen/TargetLowering.h"
++#include "llvm/CodeGen/TargetPassConfig.h"
++#include "llvm/CodeGen/TargetSubtargetInfo.h"
++#include "llvm/InitializePasses.h"
++#include "llvm/IR/Cheri.h"
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/DataLayout.h"
++#include "llvm/IR/DebugInfoMetadata.h"
++#include "llvm/IR/Function.h"
++#include "llvm/IR/GlobalVariable.h"
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/IR/InstVisitor.h"
++#include "llvm/IR/Instructions.h"
++#include "llvm/IR/Intrinsics.h"
++#include "llvm/IR/LLVMContext.h"
++#include "llvm/IR/Module.h"
++#include "llvm/Pass.h"
++#include "llvm/Target/TargetMachine.h"
++#include "llvm/Transforms/Utils/Local.h"
++
++#include <string>
++#include <utility>
++#include <unordered_map>
++
++#include "llvm/IR/Verifier.h"
++
++#define DEBUG_TYPE "cheri-blinded"
++using namespace llvm;
++#define DBG_MESSAGE(...) LLVM_DEBUG(dbgs() << DEBUG_TYPE ": " << __VA_ARGS__)
++
++
++
++namespace {
++STATISTIC(NumProcessed,  "Number of allocas that were analyzed for CHERI blinded");
++STATISTIC(NumSingleIntrin, "Number of times that a single intrinisic was used instead of per-use");
++
++class CheriBlinded : public ModulePass, public InstVisitor<CheriBlinded> {
++
++  Module *M;
++  llvm::SmallVector<AllocaInst *, 16> Allocas;
++  Type *I8CapTy;
++  Type *SizeTy;
++
++public:
++  static char ID;
++  CheriBlinded() : ModulePass(ID) {
++    initializeCheriBlindedPass(*PassRegistry::getPassRegistry());
++  }
++  StringRef getPassName() const override { return "CHERI blinded stack allocations"; }
++  void visitAllocaInst(AllocaInst &AI) {
++    Allocas.push_back(&AI);
++}
++bool hasBlindedAttribute(llvm::AllocaInst* AI, llvm::LLVMContext &Context) {
++    if (!AI) return false;
++
++
++    unsigned blindedID = Context.getMDKindID("clang.var.blinded");
++
++    if (llvm::MDNode* N = AI->getMetadata(blindedID)) {
++        return true;
++    }
++    return false;
++}
++  bool runOnModule(Module &Mod) override {
++    M = &Mod;
++    const DataLayout &DL = Mod.getDataLayout();
++    unsigned AllocaAS = DL.getAllocaAddrSpace();
++
++    // Early abort if we aren't using capabilities on the stack
++    if (!DL.isFatPointer(AllocaAS))
++      return false;
++
++    LLVMContext &C = M->getContext();
++    I8CapTy = Type::getInt8PtrTy(C, AllocaAS);
++    SizeTy = Type::getIntNTy(C, DL.getIndexSizeInBits(AllocaAS));
++
++    bool Modified = false;
++    for (Function &F : Mod)
++      Modified |= runOnFunction(F);
++
++    return Modified;
++  }
++
++  bool runOnFunction(Function &F) {
++    //F.dump();
++    
++    LLVMContext &C = M->getContext();
++    Allocas.clear();
++    visit(F);
++    // Give up if this function has no allocas
++    if (Allocas.empty())
++      return false;
++
++    LLVM_DEBUG(dbgs() << "\nChecking function " << F.getName() << "\n");
++
++    const DataLayout &DL = M->getDataLayout();
++    
++    // get the function for candperm
++    Function *BlindedStackFn =
++        Intrinsic::getDeclaration(M, Intrinsic::cheri_cap_perms_and, SizeTy);
++
++    Type *I8CapTy = Type::getInt8PtrTy(C, 200); // Capability pointer type
++    Type *I64Ty = Type::getInt64Ty(C);
++    
++    // Declare memset intrinsic correctly with address space 200
++    Function *MemsetIntrinsic = Intrinsic::getDeclaration(
++        M, Intrinsic::memset, {I8CapTy, I64Ty});
++  
++    IRBuilder<> B(C);
++
++    for (AllocaInst *AI : Allocas) {
++      NumProcessed++;
++      if(!hasBlindedAttribute(AI, C))
++        continue;
++
++      Type *AllocatedType = AI->getAllocatedType();
++      Value *AllocaSize = B.getInt64(DL.getTypeAllocSize(AllocatedType));
++      
++      Instruction *AllocaI8 = cast<Instruction>(B.CreateBitCast(AI, I8CapTy));
++      // bool FoundLifetimeEnd = false;
++      // for (Use &U : AI->uses()) {
++      //   if (Instruction *Inst = dyn_cast<Instruction>(U.getUser())) {
++      //     if (auto *LifetimeEnd = dyn_cast<CallInst>(Inst)) {
++      //       if (LifetimeEnd->getIntrinsicID() == Intrinsic::lifetime_end) {
++      //         B.SetInsertPoint(LifetimeEnd);
++      //         B.CreateCall(MemsetIntrinsic, {AllocaI8, B.getInt8(0), AllocaSize, B.getInt1(false)});
++      //         FoundLifetimeEnd = true;
++      //       }
++      //     }
++      //   }
++      // }
++  
++
++      Function *SetPermIntrin = BlindedStackFn;
++
++      // Insert immediately after the alloca, but inherit its debug loc rather
++      // than the next instruction's which is entirely unrelated
++      B.SetInsertPoint(AI->getNextNode());
++      B.SetCurrentDebugLocation(AI->getDebugLoc());
++
++      assert(isCheriPointer(AI->getType(), &DL));
++      PointerType *AllocaPtrTy = AI->getType();
++
++      SmallVector<Use *, 32> UsesAllocas;
++      for (Use &U : AI->uses()) {
++        UsesAllocas.push_back(&U);
++      }
++
++      const bool ReuseSingleIntrinsicCall = true; 
++
++      // Get the LLVM context from IRBuilder
++      llvm::LLVMContext &Ctx = B.getContext();
++
++      // Create a constant integer for 1 << 12 // I cannot export the permission
++      // value here so I added it manually 
++      llvm::Value *PermissionValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(Ctx), 0xFFFFFFFFFFFFEFFF);
++
++      if (ReuseSingleIntrinsicCall) {
++        // If we use a single instrinsic for all uses, we can simply update
++        // all uses to point at the newly inserted intrinsic.
++        NumSingleIntrin++;
++        // We need to convert it to an i8* for the intrinisic:
++        Instruction *AllocaI8 = cast<Instruction>(B.CreateBitCast(AI, I8CapTy));
++        Value *SingleBlindedAlloc =
++            B.CreateCall(SetPermIntrin, {AllocaI8, PermissionValue});
++        SingleBlindedAlloc = B.CreateBitCast(SingleBlindedAlloc, AllocaPtrTy);
++        for (Use *U : UsesAllocas) {
++          U->set(SingleBlindedAlloc);
++        }
++      } 
++      
++      // else {
++      //   // Otherwise, we create new intrinsics for every use. This can avoid
++      //   // stack spills but will result in additional instructions.
++      //   // When we encounter multiple uses within the same instruction, we need
++      //   // to ensure that we reuse the same bounded alloca intrinsic, except
++      //   // for PHI uses with different incoming blocks where we must have
++      //   // separate intrinsics in each block. If we don't do this, we could end
++      //   // up creating invalid PHI nodes where the PHI node has multiple
++      //   // entries for the same basic block and uses different incoming values,
++      //   // or uses a value in one block for a different incoming block.
++      //   // (for examples, see multiple-uses-in-same-instr.ll). This not only
++      //   // avoids invalid IR, but also avoids unnecessarily creating multiple
++      //   // intrinsic calls for non-PHIs e.g. in cases where a call instruction
++      //   // passes the same IR variable twice.
++      //   SmallDenseMap<std::pair<User *, BasicBlock *>, Value *> ReplacedUses;
++      //   for (Use *U : UsesAllocas) {
++      //     Instruction *I = cast<Instruction>(U->getUser());
++
++      //     BasicBlock *IncomingBB;
++      //     if (auto PHI = dyn_cast<PHINode>(I)) {
++      //       IncomingBB = PHI->getIncomingBlock(*U);
++      //     } else {
++      //       IncomingBB = nullptr;
++      //     }
++
++      //     Value *BoundedAlloca;
++      //     auto It = ReplacedUses.find({I, IncomingBB});
++      //     if (It == ReplacedUses.end()) {
++      //       // First use in this instruction -> create a new intrinsic call.
++      //       if (IncomingBB) {
++      //         // For PHI nodes we can't insert just before the PHI, instead we
++      //         // must insert it just before the end of the incoming BB.
++      //         // LLVM_DEBUG(dbgs() << "PHI use coming from"; IncomingBB->dump());
++      //         B.SetInsertPoint(IncomingBB->getTerminator());
++      //       } else {
++      //         // Insert just before the use. This should avoid spilling
++      //         // registers when using an alloca in a different basic block.
++      //         B.SetInsertPoint(I);
++      //       }
++      //       // Bounds should have debug loc of the alloca, not the instruction
++      //       // that happens to use them
++      //       B.SetCurrentDebugLocation(AI->getDebugLoc());
++      //       // We need to convert it to an i8* for the intrinisic. Note: we have
++      //       // to create a new bitcast every time since reusing the same one can
++      //       // cause the stack pointer + alloca offset register to be spilled
++      //       // just so we can do the setbounds in a different basic block.
++      //       Value *AllocaI8 = B.CreateBitCast(AI, I8CapTy);
++      //       auto WithBounds = B.CreateCall(SetPermIntrin, {AllocaI8, PermissionValue});
++      //       BoundedAlloca = B.CreateBitCast(WithBounds, AllocaPtrTy);
++      //       ReplacedUses.insert({{I, IncomingBB}, BoundedAlloca});
++      //       errs() << "inserting permission value: " << *AI << "\n";
++      //     } else {
++      //       // Multiple uses in the same instruction -> reuse existing call.
++      //       BoundedAlloca = It->second;
++      //     }
++          
++      //     U->set(BoundedAlloca);
++      //   }
++      // }
++      //F.dump(); 
++    }
++    return true;
++  }
++
++  void getAnalysisUsage(AnalysisUsage &AU) const override {
++    AU.addRequired<TargetPassConfig>();
++    AU.setPreservesCFG();
++  }
++};
++
++} // anonymous namespace
++
++char CheriBlinded::ID;
++INITIALIZE_PASS(CheriBlinded, DEBUG_TYPE,
++                "CHERI drop permission for alloca instructions", false, false)
++
++ModulePass *llvm::createCheriBlindedPass(void) {
++  return new CheriBlinded();
++}
+diff --git a/llvm/lib/CodeGen/CheriBlindedAnalysis.cpp b/llvm/lib/CodeGen/CheriBlindedAnalysis.cpp
+new file mode 100644
+index 000000000000..2ba6443d65a3
+--- /dev/null
++++ b/llvm/lib/CodeGen/CheriBlindedAnalysis.cpp
+@@ -0,0 +1,259 @@
++ /**
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++
++
++#include "llvm/ADT/Statistic.h"
++#include "llvm/ADT/StringSwitch.h"
++#include "llvm/Analysis/Utils/Local.h"
++#include "llvm/CodeGen/TargetLowering.h"
++#include "llvm/CodeGen/TargetPassConfig.h"
++#include "llvm/CodeGen/TargetSubtargetInfo.h"
++#include "llvm/InitializePasses.h"
++#include "llvm/IR/Cheri.h"
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/DataLayout.h"
++#include "llvm/IR/DebugInfoMetadata.h"
++#include "llvm/IR/Function.h"
++#include "llvm/IR/GlobalVariable.h"
++#include "llvm/IR/IRBuilder.h"
++#include "llvm/IR/InstVisitor.h"
++#include "llvm/IR/Instructions.h"
++#include "llvm/IR/Intrinsics.h"
++#include "llvm/IR/LLVMContext.h"
++#include "llvm/IR/Module.h"
++#include "llvm/Analysis/ValueTracking.h"
++#include "llvm/Pass.h"
++#include "llvm/Target/TargetMachine.h"
++#include "llvm/Transforms/Utils/Local.h"
++#include "llvm/Support/ErrorHandling.h"
++
++#include <string>
++#include <utility>
++#include <unordered_map>
++
++#include "llvm/IR/Verifier.h"
++
++#define DEBUG_TYPE "cheri-blinded"
++using namespace llvm;
++#define DBG_MESSAGE(...) LLVM_DEBUG(dbgs() << DEBUG_TYPE ": " << __VA_ARGS__)
++
++
++
++namespace {
++STATISTIC(NumProcessed,  "Number of allocas that were analyzed for CHERI blinded");
++STATISTIC(NumSingleIntrin, "Number of times that a single intrinisic was used instead of per-use");
++
++class CheriBlindedAnalysis : public ModulePass, public InstVisitor<CheriBlindedAnalysis> {
++
++  Module *M;
++  llvm::SmallVector<AllocaInst *, 16> Allocas;
++  Type *I8CapTy;
++  Type *SizeTy;
++
++public:
++  static char ID;
++  CheriBlindedAnalysis() : ModulePass(ID) {
++    initializeCheriBlindedAnalysisPass(*PassRegistry::getPassRegistry());
++  }
++  StringRef getPassName() const override { return "CHERI blinded stack allocations"; }
++  void visitAllocaInst(AllocaInst &AI) {
++    Allocas.push_back(&AI);
++}
++
++bool hasBlindedAttribute(llvm::AllocaInst* AI, llvm::LLVMContext &Context) {
++  if (!AI) return false;
++
++  unsigned blindedID = Context.getMDKindID("clang.var.blinded");
++
++  if (llvm::MDNode* N = AI->getMetadata(blindedID)) {
++    return true;
++  }
++  return false;
++}
++
++// bool traceToBlinded(Value *V, llvm::LLVMContext &Context) {
++//     // A queue (worklist) of Values to process
++//     SmallVector<Value *, 8> WorkList;
++//     // A set to avoid re-processing Values
++//     SmallSet<Value *, 8> Visited;
++
++//     // Initialize the queue with the starting value
++//     WorkList.push_back(V);
++//     Visited.insert(V);
++
++//     errs() << "Starting backward trace for value: " << *V << "\n";
++
++//     while (!WorkList.empty()) {
++//         Value *Current = WorkList.pop_back_val();
++//         errs() << "Processing value: " << *Current << "\n";
++
++//         // 1) If Current is an alloca with blinded attribute => success
++//         if (auto *AI = dyn_cast<AllocaInst>(Current)) {
++//             if (hasBlindedAttribute(AI, Context)) {
++//                 errs() << "Found __blinded variable: " << AI->getName() << "\n";
++//                 return true;
++//             }
++//         }
++
++//         // 2) If Current is an Instruction, we examine its operands (the sources feeding into it)
++//         if (auto *I = dyn_cast<Instruction>(Current)) {
++
++//             for (auto &Op : I->operands()) {
++//                 Value *OpVal = Op.get();
++//                 if (!Visited.count(OpVal)) {
++//                     errs() << "  Adding operand to queue: " << *OpVal << "\n";
++//                     WorkList.push_back(OpVal);
++//                     Visited.insert(OpVal);
++//                 }
++//             }
++//         }
++//         // If it's not an instruction (could be a constant, global, argument, etc.), 
++//         // there's nothing more to backtrack. 
++//         // We'll eventually pop everything from the queue and end the loop.
++//     }
++
++//     errs() << "Finished backward tracing. No __blinded derivation found for value: " << *V << "\n";
++//     return false;
++// }
++
++
++
++
++  bool runOnModule(Module &Mod) override {
++    M = &Mod;
++    const DataLayout &DL = Mod.getDataLayout();
++    unsigned AllocaAS = DL.getAllocaAddrSpace();
++
++    // Early abort if we aren't using capabilities on the stack
++    if (!DL.isFatPointer(AllocaAS))
++      return false;
++
++    LLVMContext &C = M->getContext();
++    I8CapTy = Type::getInt8PtrTy(C, AllocaAS);
++    SizeTy = Type::getIntNTy(C, DL.getIndexSizeInBits(AllocaAS));
++
++    bool Modified = false;
++    for (Function &F : Mod)
++      Modified |= runOnFunction(F);
++
++    return Modified;
++  }
++
++  bool runOnFunction(Function &F) {
++    //F.dump();
++    LLVMContext &C = F.getContext();
++    Allocas.clear();
++    visit(F);
++
++    if (Allocas.empty())
++        return false;
++
++    SmallVector<AllocaInst*, 16> initiallyBlinded;
++    for (BasicBlock &BB : F) {
++      for (Instruction &I : BB) {
++        if (auto *AI = dyn_cast<AllocaInst>(&I)) {
++          if (hasBlindedAttribute(AI, C)) {
++              initiallyBlinded.push_back(AI);
++          }
++        }
++      }
++    }
++
++    std::queue<AllocaInst*> worklist;
++    for (AllocaInst* AI : initiallyBlinded) {
++      worklist.push(AI);
++    }
++
++    // A helper lambda to mark an alloca as blinded if not already
++    auto markBlindedIfNeeded = [&](AllocaInst *NewAI) {
++      if (!hasBlindedAttribute(NewAI, C)) {
++        LLVMContext &Ctx = NewAI->getContext();
++        MDNode *BlindedMeta = MDNode::get(Ctx, MDString::get(Ctx, "blinded"));
++          NewAI->setMetadata("clang.var.blinded", BlindedMeta);
++          worklist.push(NewAI);
++        }
++    };
++
++          
++    while (!worklist.empty()) {
++      AllocaInst *Cur = worklist.front();
++      worklist.pop();
++
++      for (User *U : Cur->users()) {
++        // GEP analysis 
++        if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
++          for (User *GEPUser : GEP->users()) {
++            if (auto *Store = dyn_cast<StoreInst>(GEPUser)) {
++              Value *Ptr = Store->getPointerOperand();
++              if (auto *B = dyn_cast<AllocaInst>(Ptr)) {
++                markBlindedIfNeeded(B);
++              }
++            } else if (auto *Load = dyn_cast<LoadInst>(GEPUser)) {
++              for (User *LoadUser : Load->users()) {
++                if (auto *Store = dyn_cast<StoreInst>(LoadUser)) {
++                  Value *Ptr = Store->getPointerOperand();
++                  if (auto *B = dyn_cast<AllocaInst>(Ptr)) {
++                    markBlindedIfNeeded(B);
++                  }
++                }
++              }
++            }
++          }
++        } 
++        // direct store analysis
++        else if (auto *Store = dyn_cast<StoreInst>(U)) {
++          Value *Ptr = Store->getPointerOperand();
++          Value *Underlying = getUnderlyingObject(Ptr, 6);
++          if (auto *B = dyn_cast<AllocaInst>(Underlying)) {
++              markBlindedIfNeeded(B);
++          }
++        } 
++        // direct load analysis
++        else if (auto *Load = dyn_cast<LoadInst>(U)) {
++          for (User *LoadUser : Load->users()) {
++            if (auto *Store = dyn_cast<StoreInst>(LoadUser)) {
++                Value *Ptr = Store->getPointerOperand();
++                if (auto *B = dyn_cast<AllocaInst>(Ptr)) {
++                  markBlindedIfNeeded(B);
++                }
++            }
++          }
++        }
++      }
++    }
++    //F.dump(); 
++    return true; 
++  }
++    // // **Return Value Analysis**
++    // for (BasicBlock &BB : F) {
++    //     for (Instruction &I : BB) {
++    //         if (auto *Ret = dyn_cast<ReturnInst>(&I)) {
++    //             Value *RetVal = Ret->getReturnValue();
++    //             if (RetVal && traceToBlinded(RetVal, C)) {
++    //                 llvm:report_fatal_error("Return Error");
++    //             }
++    //         }
++    //     }
++    // }
++//}
++
++
++  void getAnalysisUsage(AnalysisUsage &AU) const override {
++    AU.addRequired<TargetPassConfig>();
++    AU.setPreservesCFG();
++  }
++};
++
++} // anonymous namespace
++
++char CheriBlindedAnalysis::ID;
++INITIALIZE_PASS(CheriBlindedAnalysis, DEBUG_TYPE,
++                "CHERI drop permission for alloca instructions", false, false)
++
++ModulePass *llvm::createCheriBlindedAnalysisPass(void) {
++  return new CheriBlindedAnalysis();
++}
+diff --git a/llvm/lib/CodeGen/CodeGen.cpp b/llvm/lib/CodeGen/CodeGen.cpp
+index ea26f185dc2e..75da7e863902 100644
+--- a/llvm/lib/CodeGen/CodeGen.cpp
++++ b/llvm/lib/CodeGen/CodeGen.cpp
+@@ -10,7 +10,13 @@
+ // CodeGen library.
+ //
+ //===----------------------------------------------------------------------===//
+-
++ /**
++ * @author Merve Gulmez 
++ * include the blinded code pass
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
+ #include "llvm-c/Initialization.h"
+ #include "llvm/InitializePasses.h"
+ #include "llvm/PassRegistry.h"
+@@ -27,7 +33,9 @@ void llvm::initializeCodeGen(PassRegistry &Registry) {
+   initializeCFIFixupPass(Registry);
+   initializeCFIInstrInserterPass(Registry);
+   initializeCheckDebugMachineModulePass(Registry);
++  initializeCheriBlindedAnalysisPass(Registry);
+   initializeCheriBoundAllocasPass(Registry);
++  initializeCheriBlindedPass(Registry);
+   initializeCheriGetAddressElimPass(Registry);
+   initializeCodeGenPreparePass(Registry);
+   initializeDeadMachineInstructionElimPass(Registry);
+diff --git a/llvm/lib/Target/RISCV/RISCVTargetMachine.cpp b/llvm/lib/Target/RISCV/RISCVTargetMachine.cpp
+index 47aa8ef9ee36..de4424352789 100644
+--- a/llvm/lib/Target/RISCV/RISCVTargetMachine.cpp
++++ b/llvm/lib/Target/RISCV/RISCVTargetMachine.cpp
+@@ -10,6 +10,13 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
++ 
+ #include "RISCVTargetMachine.h"
+ #include "MCTargetDesc/RISCVBaseInfo.h"
+ #include "RISCV.h"
+@@ -221,7 +228,9 @@ void RISCVPassConfig::addIRPasses() {
+   if (getOptLevel() != CodeGenOpt::None)
+     addPass(createRISCVCodeGenPreparePass());
+ 
++  addPass(createCheriBlindedAnalysisPass());
+   addPass(createCheriBoundAllocasPass());
++  addPass(createCheriBlindedPass());
+   TargetPassConfig::addIRPasses();
+ }
+ 
+diff --git a/llvm/tools/opt/opt.cpp b/llvm/tools/opt/opt.cpp
+index 2d86974e9875..1801b4931eb3 100644
+--- a/llvm/tools/opt/opt.cpp
++++ b/llvm/tools/opt/opt.cpp
+@@ -11,6 +11,12 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++ /**
++ * @author Merve Gulmez 
++ * @copyright © Ericsson AB 2025
++ * 
++ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++ */
+ #include "BreakpointPrinter.h"
+ #include "NewPMDriver.h"
+ #include "llvm/ADT/Triple.h"
+@@ -531,6 +537,8 @@ int main(int argc, char **argv) {
+   initializeJMCInstrumenterPass(Registry);
+ 
+   // Add the Cheri IR -> IR passes
++  initializeCheriBlindedPass(Registry);
++  initializeCheriBlindedAnalysisPass(Registry);
+   initializeCheriBoundAllocasPass(Registry);
+ 
+ #ifdef BUILD_EXAMPLES

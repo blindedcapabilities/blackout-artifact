@@ -1,0 +1,11 @@
++ time ./risc_oblivious_blinded/dnn_20.o
+        6.54 real         4.71 user         1.71 sys
+        6.51 real         4.94 user         1.46 sys
+        6.51 real         4.90 user         1.49 sys
+        6.50 real         4.82 user         1.56 sys
+        6.52 real         5.00 user         1.39 sys
+        6.51 real         4.91 user         1.49 sys
+        6.50 real         5.22 user         1.16 sys
+        6.50 real         4.98 user         1.40 sys
+        6.51 real         4.81 user         1.57 sys
+        6.51 real         4.63 user         1.75 sys

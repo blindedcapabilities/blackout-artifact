@@ -1,0 +1,6 @@
+# for i in $(seq 1 5); do time ./find_max_18.o; done   
+        1.22 real         0.89 user         0.27 sys
+        1.08 real         0.74 user         0.28 sys
+        1.29 real         0.98 user         0.25 sys
+        1.30 real         0.94 user         0.30 sys
+        1.29 real         0.93 user         0.31 sys

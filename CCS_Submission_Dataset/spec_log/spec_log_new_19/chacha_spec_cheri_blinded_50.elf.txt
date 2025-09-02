@@ -1,0 +1,9 @@
+# Log for ELF: chacha_spec_cheri_blinded_50.elf
+# Timestamp: 2025-07-28 12:57:46.257510
+
+Mode: 0, input: 50
+50s/50c
+work time   :[10705454]
+encrypt time:[9671416]
+total time  :[20376870]
+Exit code 0

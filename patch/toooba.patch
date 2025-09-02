@@ -1,0 +1,606 @@
+diff --git a/.gitmodules b/.gitmodules
+index 76c0b05..bc9c2c8 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -9,7 +9,7 @@
+ 	url = https://github.com/CTSRD-CHERI/TagController.git
+ [submodule "libs/cheri-cap-lib"]
+ 	path = libs/cheri-cap-lib
+-	url = https://github.com/CTSRD-CHERI/cheri-cap-lib.git
++	url = git@gitlab.com:ssg-research/platsec/attack-tolerant-execution/cheri-cap-lib.git
+ [submodule "libs/RISCV_HPM_Events"]
+ 	path = libs/RISCV_HPM_Events
+ 	url = https://github.com/CTSRD-CHERI/RISCV_HPM_Events.git
+diff --git a/builds/Resources/Include_Common.mk b/builds/Resources/Include_Common.mk
+index 6ea0fa8..aea6b33 100644
+--- a/builds/Resources/Include_Common.mk
++++ b/builds/Resources/Include_Common.mk
+@@ -72,7 +72,7 @@ EXAMPLE ?= PLEASE_DEFINE_EXAMPLE_PATH_TO_ELF
+ run_example:
+ 	make -C  $(TESTS_DIR)/elf_to_hex
+ 	$(TESTS_DIR)/elf_to_hex/elf_to_hex  $(EXAMPLE)  Mem.hex
+-	./exe_HW_sim  $(VERBOSITY)  +exit
++	./exe_HW_sim  $(VERBOSITY)  +tohost
+ 
+ # ================================================================
+ # Test: run the executable on the standard RISCV ISA test specified in TEST
+diff --git a/libs/BlueStuff b/libs/BlueStuff
+index af76287..2a2190a 160000
+--- a/libs/BlueStuff
++++ b/libs/BlueStuff
+@@ -1 +1 @@
+-Subproject commit af76287d731d723eaaba670d342fbf65ad038315
++Subproject commit 2a2190a1cf7824a1ab089cad025302c4e75fd683
+diff --git a/libs/cheri-cap-lib b/libs/cheri-cap-lib
+index 27e63bd..b918b91 160000
+--- a/libs/cheri-cap-lib
++++ b/libs/cheri-cap-lib
+@@ -1 +1 @@
+-Subproject commit 27e63bd9fdd126997ba90034eee3f2136a027d27
++Subproject commit b918b91e35ec52ac8cf98a915eaed82998c2c093
+diff --git a/src_Core/CPU/CsrFile.bsv b/src_Core/CPU/CsrFile.bsv
+index 971ff22..13407df 100644
+--- a/src_Core/CPU/CsrFile.bsv
++++ b/src_Core/CPU/CsrFile.bsv
+@@ -1168,6 +1168,10 @@ module mkCsrFile #(Data hartid)(CsrFile);
+                 cause_code = pack(excCHERIFault);
+                 trap_val = zeroExtend({pack(ce.cheri_exc_reg), pack(ce.cheri_exc_code)});
+             end
++            tagged BlimeException .be: begin
++                cause_code = pack(excCHERIFault);
++                trap_val = zeroExtend({pack(be.code)});
++            end
+             tagged Interrupt .i: begin
+                 cause_code = zeroExtend(pack(i));
+                 cause_interrupt = 1;
+@@ -1192,6 +1196,7 @@ module mkCsrFile #(Data hartid)(CsrFile);
+         Bool deleg = prv_reg <= prvS && (case(t) matches
+             tagged Exception .e: return medeleg_csr[pack(e)] == 1;
+             tagged CapException .ce: return medeleg_csr[pack(excCHERIFault)] == 1;
++            tagged BlimeException .ce: return medeleg_csr[pack(excCHERIFault)] == 1;
+             tagged Interrupt .i: return mideleg_csr[pack(i)] == 1;
+         endcase);
+         // handle the trap
+diff --git a/src_Core/RISCY_OOO/procs/RV64G_OOO/AluExePipeline.bsv b/src_Core/RISCY_OOO/procs/RV64G_OOO/AluExePipeline.bsv
+index 80f7e30..3d34f9f 100644
+--- a/src_Core/RISCY_OOO/procs/RV64G_OOO/AluExePipeline.bsv
++++ b/src_Core/RISCY_OOO/procs/RV64G_OOO/AluExePipeline.bsv
+@@ -123,6 +123,7 @@ typedef struct {
+     PPCVAddrCSRData csrData; // data to write CSR file, or predicted next PC if not. (For reorder buffer)
+     ControlFlow controlFlow;
+     Maybe#(CSR_XCapCause) capException;
++    Maybe#(BlimeException) blimeException;
+     Maybe#(BoundsCheck) check;
+     // speculation
+     Maybe#(SpecTag) spec_tag;
+@@ -195,7 +196,8 @@ interface AluExeInput;
+         CapPipe dst_data,
+ `endif
+         PPCVAddrCSRData csrData,
+-        Maybe#(CSR_XCapCause) capCause
++        Maybe#(CSR_XCapCause) capCause,
++        Maybe#(BlimeException) blimeException
+ `ifdef RVFI
+         , ExtraTraceBundle tb
+ `endif
+@@ -397,6 +399,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
+         if(verbose) $display("[doExeAlu] ", fshow(regToExe));
+         // execution
+         ExecResult exec_result = basicExec(x.dInst, x.rVal1, x.rVal2, cast(x.pc), cast(x.ppc), x.orig_inst);
++        if(exec_result.blimeException != Invalid) $display("[doExeAlu] exec_result:", fshow(exec_result));
+ 
+         Bool link = (case (x.dInst.iType)
+                 J, CJAL, CJALR, Jr: isValid(x.dst);
+@@ -433,6 +436,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
+         // This condition can eliminate Meltdown-CF vulnerabilities for exception conditions that don't need the bounds check result.
+         if (isValid(exec_result.capException)) exec_result.data = setValidCap(exec_result.data, False);
+ `endif
++        if (isValid(exec_result.blimeException)) exec_result.data = nullCap;
+         // send bypass
+         if(x.dst matches tagged Valid .dst) begin
+             inIfc.sendBypass[exeSendBypassPort].send(dst.indx, exec_result.data);
+@@ -457,6 +461,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
+                 data: exec_result.data,
+                 csrData: is_scr_or_csr ? CSRData (exec_result.csrData) : PPC (cast(exec_result.controlFlow.nextPc)),
+                 capException: exec_result.capException,
++                blimeException: exec_result.blimeException, // should I enqueue this to send to next phase or should I trap here? safe to send to next phase since we set data to null_cap on exception
+                 check: exec_result.boundsCheck,
+ `ifdef RVFI
+                 traceBundle: ExtraTraceBundle{
+@@ -500,7 +505,8 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
+             x.data,
+ `endif
+             x.csrData,
+-            x.capException
++            x.capException,
++            x.blimeException
+ `ifdef RVFI
+             , x.traceBundle
+ `endif
+diff --git a/src_Core/RISCY_OOO/procs/RV64G_OOO/MemExePipeline.bsv b/src_Core/RISCY_OOO/procs/RV64G_OOO/MemExePipeline.bsv
+index 98a6796..7a14aa1 100644
+--- a/src_Core/RISCY_OOO/procs/RV64G_OOO/MemExePipeline.bsv
++++ b/src_Core/RISCY_OOO/procs/RV64G_OOO/MemExePipeline.bsv
+@@ -111,6 +111,7 @@ typedef struct {
+     CapChecks cap_checks;
+     ByteOrTagEn origBE;
+     MemDataByteEn shiftBEData;
++    Maybe#(BlimeException) blimeException;
+ `ifdef KONATA
+     Bit#(64) u_id;
+ `endif
+@@ -132,7 +133,9 @@ typedef struct {
+     Bool misaligned;
+     Bool capStore;
+     Bool allowCapLoad;
++    Bool blindedLoad;
+     Maybe#(CSR_XCapCause) capException;
++    Maybe#(BlimeException) blimeException;
+     Maybe#(BoundsCheck) check;
+ `ifdef KONATA
+     Bit#(64) u_id;
+@@ -541,6 +544,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         // get virtual addr & St/Sc/Amo data
+         CapPipe vaddr = modifyOffset(rVal1, signExtend(x.imm), True).value;
+         CapPipe data = rVal2;
++        Maybe#(BlimeException) blimeException = Invalid;
+         MemTaggedData toMemData = unpack(pack(toMem(data)));
+ 
+ `ifdef RVFI
+@@ -562,6 +566,24 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         // update LSQ data now
+         if(x.ldstq_tag matches tagged St .stTag) begin
+             MemTaggedData d = x.mem_func == Amo ? toMemData : shiftData; // XXX don't shift for AMO
++            if (getBlinded(data)) begin
++                // check if inst is csc (and only apply for csp?)
++                Bit#(TLog#(MemDataBytes)) byteOffset = truncate(getAddr(vaddr));
++                if(verbose) $display("%t : [blinded_store] d: ", $time, fshow(d), " byteOffset: ", fshow(byteOffset), " origBE: ", fshow(origBE));
++                // if (x.regs.src1 matches tagged Valid .src1 &&& src1 == 2 && byteOffset == 0 && origBE.DataMemAccess == replicate(True)) begin
++                if (byteOffset == 0 && origBE.DataMemAccess == replicate(True)) begin
++                    if(verbose) $display("%t : [blinded_store] magic time", $time);
++                    Bit#(DataSz) magic = 64'h0000deadbeef0000; // bit 46 must be set
++                    d.data[1] = magic;
++                    d.tag = True;
++                end
++                else if (getHardPerms(rVal1).permitBlindedCap) begin
++                    if(verbose) $display("%t : [blinded_store] faulty faulty", $time);
++                    d = 0;
++                    rVal2 = nullCap;
++                    blimeException = Valid(blimeExcBlindedSt);
++                end
++            end
+             lsq.updateData(stTag, d);
+ `ifdef PERFORMANCE_MONITORING
+             EventsCore events = unpack(0);
+@@ -587,7 +609,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+                 vaddr: vaddr,
+                 cap_checks: x.cap_checks,
+                 origBE: origBE,
+-                shiftBEData: shiftBEData
++                shiftBEData: shiftBEData,
++                blimeException: blimeException
+ `ifdef KONATA
+                 , u_id: x.u_id
+ `endif
+@@ -635,7 +658,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+                 misaligned: memAddrMisaligned(getAddr(x.vaddr), x.origBE),
+                 capStore: isValidCap(x.rVal2) && x.origBE == DataMemAccess(unpack(~0)),
+                 allowCapLoad: getHardPerms(x.rVal1).permitLoadCap && x.origBE == DataMemAccess(unpack(~0)),
++                blindedLoad: !getHardPerms(x.rVal1).permitBlindedCap, //False,
+                 capException: capChecksMem(x.rVal1, x.rVal2, x.cap_checks, x.mem_func, x.origBE),
++                blimeException: x.blimeException,
+                 check: prepareBoundsCheck(x.rVal1, x.rVal2, almightyCap/*ToDo: pcc*/,
+                                           ddc, getAddr(x.vaddr), accessByteCount, x.cap_checks)
+ `ifdef KONATA
+@@ -653,6 +678,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         let {paddr, expCause, allowCapPTE} = dTlbResp.resp;
+         Maybe#(Trap) cause = Invalid;
+         if (expCause matches tagged Valid .c) cause = Valid(Exception(c));
++        if (x.blimeException matches tagged Valid .c) cause = Valid(BlimeException(c));
+ 
+         if(verbose) $display("%t : [doFinishMem] ", $time, fshow(dTlbResp));
+         if(isValid(cause) && verbose) $display("  [doFinishMem - dTlb response] PAGEFAULT!");
+@@ -756,7 +782,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+ `endif
+         // update LSQ
+         LSQUpdateAddrResult updRes <- lsq.updateAddr(
+-            x.ldstq_tag, cause, x.allowCapLoad && allowCapPTE, paddr, isMMIO, x.shiftedBE
++            x.ldstq_tag, cause, x.allowCapLoad && allowCapPTE, x.blindedLoad, paddr, isMMIO, x.shiftedBE
+         );
+ 
+         // issue non-MMIO Ld which has no exception and is not waiting for
+@@ -888,7 +914,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         if(verbose) $display("%t : ", $time, rule_name, " ", fshow(tag), "; ", fshow(data), "; ", fshow(res));
+         if(res.dst matches tagged Valid .dst) begin
+             CapPipe dataUnpacked = fromMem(unpack(pack(res.data)));
++            Bool isCapBitSet = isValidCap(dataUnpacked);
++            Bit#(DataSz) magic = 64'h0000deadbeef0000; // bit 46 must be set
++            if(res.blindedLoad || (isCapBitSet && res.data.data[1] == magic)) begin
++                dataUnpacked = setBlinded(dataUnpacked);
++            end
+             dataUnpacked = setValidCap(dataUnpacked, res.allowCap && isValidCap(dataUnpacked));
++            if (verbose) $display("idx: ", fshow(dst.indx), " data: ", fshow(dataUnpacked));
+             inIfc.writeRegFile(dst.indx, dataUnpacked);
+ 
+ `ifdef INCLUDE_TANDEM_VERIF
+@@ -1054,7 +1086,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         // write reg file & set ROB as Executed & wakeup rs
+         if(lsqDeqLd.dst matches tagged Valid .dst) begin
+             CapPipe dataUnpacked = fromMem(unpack(pack(resp)));
++            Bool isCapBitSet = isValidCap(dataUnpacked);
++            Bit#(DataSz) magic = 64'h0000deadbeef0000; // bit 46 must be set
++            if(lsqDeqLd.blindedLoad || (isCapBitSet && resp.data[1] == magic)) begin
++                dataUnpacked = setBlinded(dataUnpacked);
++            end
+             dataUnpacked = setValidCap(dataUnpacked, lsqDeqLd.allowCap && isValidCap(dataUnpacked));
++            if (verbose) $display("idx: ", fshow(dst.indx), " data: ", fshow(dataUnpacked));
+             inIfc.writeRegFile(dst.indx, dataUnpacked);
+             inIfc.setRegReadyAggr_mem(dst.indx);
+ `ifdef INCLUDE_TANDEM_VERIF
+@@ -1145,7 +1183,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         // write reg file & wakeup rs (this wakeup is late but MMIO is rare) & set ROB as Executed
+         if(lsqDeqLd.dst matches tagged Valid .dst) begin
+             CapPipe dataUnpacked = fromMem(tuple2(resp.tag,unpack(pack(resp.data))));
++            Bool isCapBitSet = isValidCap(dataUnpacked);
++            Bit#(DataSz) magic = 64'h0000deadbeef0000; // bit 46 must be set
++            if(lsqDeqLd.blindedLoad || (isCapBitSet && resp.data[1] == magic)) begin
++                dataUnpacked = setBlinded(dataUnpacked);
++            end
+             dataUnpacked = setValidCap(dataUnpacked, lsqDeqLd.allowCap && isValidCap(dataUnpacked));
++            if (verbose) $display("idx: ", fshow(dst.indx), " data: ", fshow(dataUnpacked));
+             inIfc.writeRegFile(dst.indx, dataUnpacked);
+             inIfc.setRegReadyAggr_mem(dst.indx);
+ `ifdef INCLUDE_TANDEM_VERIF
+@@ -1398,6 +1442,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         if(lsqDeqSt.dst matches tagged Valid .dst) begin
+             CapPipe dataUnpacked = fromMem(tuple2(resp.tag, pack(resp.data)));
+             dataUnpacked = setValidCap(dataUnpacked, lsqDeqSt.allowCapAmoLd && isValidCap(dataUnpacked));
++            if (verbose) $display("idx: ", fshow(dst.indx), " data: ", fshow(dataUnpacked));
+             inIfc.writeRegFile(dst.indx, dataUnpacked);
+             inIfc.setRegReadyAggr_mem(dst.indx);
+ `ifdef INCLUDE_TANDEM_VERIF
+@@ -1513,6 +1558,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
+         if(lsqDeqSt.dst matches tagged Valid .dst) begin
+             CapPipe dataUnpacked = fromMem(tuple2(resp.tag, pack(resp.data)));
+             dataUnpacked = setValidCap(dataUnpacked, lsqDeqSt.allowCapAmoLd && isValidCap(dataUnpacked));
++            if (verbose) $display("idx: ", fshow(dst.indx), " data: ", fshow(dataUnpacked));
+             inIfc.writeRegFile(dst.indx, dataUnpacked);
+             inIfc.setRegReadyAggr_mem(dst.indx);
+ `ifdef INCLUDE_TANDEM_VERIF
+diff --git a/src_Core/RISCY_OOO/procs/RV64G_OOO/RFileSynth.bsv b/src_Core/RISCY_OOO/procs/RV64G_OOO/RFileSynth.bsv
+index 5226e4c..61b8d0c 100644
+--- a/src_Core/RISCY_OOO/procs/RV64G_OOO/RFileSynth.bsv
++++ b/src_Core/RISCY_OOO/procs/RV64G_OOO/RFileSynth.bsv
+@@ -41,11 +41,11 @@ import Types::*;
+ import CHERICap::*;
+ import CHERICC_Fat::*;
+ 
+-typedef RFile#(RFileWrPortNum, RFileRdPortNum, CapReg) RFileSynth;
++typedef RFile#(RFileWrPortNum, RFileRdPortNum, BlindedCapReg) RFileSynth;
+ 
+ (* synthesize *)
+ module mkRFileSynth(RFileSynth);
+-    CapReg default_register_value = nullCap;
++    BlindedCapReg default_register_value = nullCap;
+     //Data default_register_value = 0;
+     `ifdef RVFI_DII
+         default_register_value = almightyCap;
+diff --git a/src_Core/RISCY_OOO/procs/lib/BlimeExceptions.bsvi b/src_Core/RISCY_OOO/procs/lib/BlimeExceptions.bsvi
+new file mode 100644
+index 0000000..f3218ff
+--- /dev/null
++++ b/src_Core/RISCY_OOO/procs/lib/BlimeExceptions.bsvi
+@@ -0,0 +1,4 @@
++`BlimeException(ControlFlow,        5'd12)
++`BlimeException(MemoryOp,           5'd13)
++`BlimeException(CapOp,              5'd14)
++`BlimeException(BlindedSt,          5'd15)
+diff --git a/src_Core/RISCY_OOO/procs/lib/Exec.bsv b/src_Core/RISCY_OOO/procs/lib/Exec.bsv
+index c408936..d13377f 100644
+--- a/src_Core/RISCY_OOO/procs/lib/Exec.bsv
++++ b/src_Core/RISCY_OOO/procs/lib/Exec.bsv
+@@ -79,6 +79,33 @@ function Maybe#(CSR_XCapCause) capChecksExec(CapPipe a, CapPipe b, CapPipe ddc,
+     return result;
+ endfunction
+ 
++(* noinline *)
++function Maybe#(BlimeException) blimeChecksExec(CapPipe a, CapPipe b, IType instType, CapModifyFunc capFunc);
++    Maybe#(BlimeException) result = Invalid;
++    result = (case (instType)
++        Jr, CCall, CJALR:       (getBlinded(a) ? Valid(blimeExcControlFlow) : Invalid);
++        Br:                     ((getBlinded(a) || getBlinded(b)) ? Valid(blimeExcControlFlow) : Invalid);
++        Ld, Lr, St, Sc, Amo:    (getBlinded(a) ? Valid(blimeExcMemoryOp) : Invalid);
++        Scr:                    ((getBlinded(a) || getBlinded(b)) ? Valid(blimeExcCapOp) : Invalid);
++        Cap: begin              
++                (case (capFunc) matches
++                    tagged SealEntry: // a
++                        (getBlinded(a) ? Valid(blimeExcCapOp) : Invalid);
++                    tagged Move: // no leakage no problem
++                        Invalid;
++                    tagged ClearTag:
++                        Invalid;
++                    default:
++                    // tagged ModifyOffset, SetBounds, SetAddr, Seal, CSeal, Unseal, AndPerm, SetFlags, FromPtr, BuildCap, SpecialRW: // a or b
++                        ((getBlinded(a) || getBlinded(b)) ? Valid(blimeExcCapOp) : Invalid);
++                endcase);
++            end
++        // Fpu:                    ?
++        default:                Invalid;
++    endcase);
++    return result;
++endfunction
++
+ (* noinline *)
+ function Maybe#(CSR_XCapCause) capChecksMem(CapPipe auth, CapPipe data, CapChecks toCheck, MemFunc mem_func, ByteOrTagEn byteOrTagEn);
+     function Maybe#(CSR_XCapCause) eAuth(CHERIException e)   = Valid(CSR_XCapCause{cheri_exc_reg: case (toCheck.check_authority_src) matches Src1: toCheck.rn1;
+@@ -402,16 +429,19 @@ function ExecResult basicExec(DecodedInst dInst, CapPipe rVal1, CapPipe rVal2, C
+     let aluVal2 = dInst.capFunc matches tagged CapModify .cm &&& cm matches tagged SpecialRW ._ ? rVal2 : fromMaybe(rVal2, capImm);
+     // Get the alu function. By default, it adds. This is used by memory instructions
+     AluFunc alu_f = dInst.execFunc matches tagged Alu .alu_f ? alu_f : Add;
+-    Data alu_result = alu(getAddr(rVal1), getAddr(aluVal2), alu_f);
++    BlindedData alu_result = BlindedData { blinded: getBlinded(rVal1) || getBlinded(aluVal2), data: alu(getAddrUnsafe(rVal1), getAddrUnsafe(aluVal2), alu_f) };
++    CapPipe alu_result_cappipe = nullWithAddr(alu_result.data);
++    if (alu_result.blinded) alu_result_cappipe = setBlinded(alu_result_cappipe);
+ 
+     CapPipe cap_alu_result = capALU(rVal1, aluVal2, dInst.capFunc);
+     CapPipe link_pcc = addPc(pcc, ((orig_inst [1:0] == 2'b11) ? 4 : 2));
+ 
+     // Default branch function is not taken
+     BrFunc br_f = dInst.execFunc matches tagged Br .br_f ? br_f : NT;
+-    cf.taken = aluBr(getAddr(rVal1), getAddr(rVal2), br_f);
++    cf.taken = aluBr(getAddr(rVal1), getAddr(rVal2), br_f); // getAddr zeroes blinded values so this is safe
+     cf.nextPc = brAddrCalc(pcc, rVal1, dInst.iType, fromMaybe(0,getDInstImm(dInst)), cf.taken, orig_inst, newPcc);
+ 
++    Maybe#(BlimeException) blimeException = blimeChecksExec(rVal1, aluVal2, dInst.iType, dInst.capFunc.CapModify);
+     Maybe#(CSR_XCapCause) capException = capChecksExec(rVal1, aluVal2, nullCap, dInst.capChecks, dInst.imm.Valid);
+     if (dInst.execFunc matches tagged Br .unused) begin
+         rVal1 = cf.nextPc;
+@@ -438,18 +468,18 @@ function ExecResult basicExec(DecodedInst dInst, CapPipe rVal1, CapPipe rVal2, C
+             Csr         : rVal1;
+             Scr         : cap_alu_result;
+             Cap         : cap_alu_result;
+-            default     : nullWithAddr(alu_result);
++            default     : alu_result_cappipe;
+         endcase);
+     CapMem csr_data = (case (dInst.iType)
+                        Scr: cast(specialRWALU(fromMaybe(rVal1, capImm), rVal2, dInst.capFunc.CapModify.SpecialRW));
+-                       default: nullWithAddr(alu_result);
++                       default: cast(alu_result_cappipe);
+                     endcase);
+     addr = (case (dInst.iType)
+-            Ld, St, Lr, Sc, Amo : nullWithAddr(alu_result);
++            Ld, St, Lr, Sc, Amo : alu_result_cappipe;
+             default             : cf.nextPc; //TODO should this be nullified?
+         endcase);
+ 
+-    return ExecResult{data: data, csrData: csr_data, addr: addr, controlFlow: cf, capException: capException, boundsCheck: boundsCheck};
++    return ExecResult{data: data, csrData: csr_data, addr: addr, controlFlow: cf, capException: capException, blimeException:blimeException, boundsCheck: boundsCheck};
+ endfunction
+ 
+ (* noinline *)
+diff --git a/src_Core/RISCY_OOO/procs/lib/ProcTypes.bsv b/src_Core/RISCY_OOO/procs/lib/ProcTypes.bsv
+index 208a2e6..4a0de49 100644
+--- a/src_Core/RISCY_OOO/procs/lib/ProcTypes.bsv
++++ b/src_Core/RISCY_OOO/procs/lib/ProcTypes.bsv
+@@ -480,9 +480,25 @@ typedef 16 InterruptNum;    // With debugger
+ typedef 12 InterruptNum;    // Without debugger
+ `endif
+ 
++typedef struct { Bit#(5) code; } BlimeException deriving(Bits, Eq);
++`define BlimeException(n, v) BlimeException blimeExc``n = BlimeException { code: v };
++`include "BlimeExceptions.bsvi"
++`undef BlimeException
++instance FShow#(BlimeException);
++    function Fmt fshow(BlimeException exc);
++        return (case(exc.code)
++`define BlimeException(n, v) v: $format(`"``blimeExc``n```");
++`include "BlimeExceptions.bsvi"
++`undef BlimeException
++            default: $format("blimeExcUnknown");
++        endcase);
++    endfunction
++endinstance
++
+ // Traps are either an exception or an interrupt
+ typedef union tagged {
+     CapException CapException;
++    BlimeException BlimeException;
+     Exception Exception;
+     Interrupt Interrupt;
+ } Trap deriving(Bits, Eq, FShow);
+@@ -694,6 +710,7 @@ typedef struct {
+     CapPipe     addr;
+     ControlFlow controlFlow;
+     Maybe#(CapException) capException;
++    Maybe#(BlimeException) blimeException;
+     Maybe#(BoundsCheck) boundsCheck;
+ } ExecResult deriving(Bits, FShow);
+ 
+diff --git a/src_Core/RISCY_OOO/procs/lib/ReorderBuffer.bsv b/src_Core/RISCY_OOO/procs/lib/ReorderBuffer.bsv
+index 67536ae..e47e013 100644
+--- a/src_Core/RISCY_OOO/procs/lib/ReorderBuffer.bsv
++++ b/src_Core/RISCY_OOO/procs/lib/ReorderBuffer.bsv
+@@ -138,7 +138,8 @@ interface Row_setExecuted_doFinishAlu;
+         CapPipe dst_data,
+ `endif
+         PPCVAddrCSRData csrData,
+-        Maybe#(CSR_XCapCause) cause
++        Maybe#(CSR_XCapCause) cause,
++        Maybe#(BlimeException) blimeException
+ `ifdef RVFI
+         , ExtraTraceBundle tb
+ `endif
+@@ -309,7 +310,8 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
+                 CapPipe dst_data,
+ `endif
+                 PPCVAddrCSRData csrDataOrPPC,
+-                Maybe#(CSR_XCapCause) cause
++                Maybe#(CSR_XCapCause) cause,
++                Maybe#(BlimeException) blimeException
+ `ifdef RVFI
+                 , ExtraTraceBundle tb
+ `endif
+@@ -325,6 +327,8 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
+                 ppc_vaddr_csrData[pvc_finishAlu_port(i)] <= csrDataOrPPC;
+                 if (cause matches tagged Valid .exp)
+                     trap[trap_finishAlu_port(i)] <= Valid (CapException (exp));
++                else if (blimeException matches tagged Valid .bexp)
++                    trap[trap_finishAlu_port(i)] <= Valid (BlimeException (bexp));
+ `ifdef RVFI
+                 //$display("%t : traceBundle = ", $time(), fshow(tb), " in Row_setExecuted_doFinishAlu for %x", pc);
+                 traceBundle[traceBundle_finishAlu_port(i)] <= tb;
+@@ -582,7 +586,8 @@ interface ROB_setExecuted_doFinishAlu;
+                       Data dst_data,
+ `endif
+                       PPCVAddrCSRData csrData,
+-                      Maybe#(CSR_XCapCause) cause
++                      Maybe#(CSR_XCapCause) cause,
++                      Maybe#(BlimeException) blimeException
+ `ifdef RVFI
+                       , ExtraTraceBundle tb
+ `endif
+@@ -1165,7 +1170,8 @@ module mkSupReorderBuffer#(
+                 Data dst_data,
+ `endif
+                 PPCVAddrCSRData csrData,
+-                Maybe#(CSR_XCapCause) cause
++                Maybe#(CSR_XCapCause) cause,
++                Maybe#(BlimeException) blimeException
+ `ifdef RVFI
+                 , ExtraTraceBundle tb
+ `endif
+@@ -1177,7 +1183,8 @@ module mkSupReorderBuffer#(
+                     dst_data,
+ `endif
+                     csrData,
+-                    cause
++                    cause,
++                    blimeException
+ `ifdef RVFI
+                     , tb
+ `endif
+diff --git a/src_Core/RISCY_OOO/procs/lib/SplitLSQ.bsv b/src_Core/RISCY_OOO/procs/lib/SplitLSQ.bsv
+index d0fc251..c8dd6c4 100644
+--- a/src_Core/RISCY_OOO/procs/lib/SplitLSQ.bsv
++++ b/src_Core/RISCY_OOO/procs/lib/SplitLSQ.bsv
+@@ -302,6 +302,7 @@ typedef struct {
+     Bool wrongPath;
+     Maybe#(PhyDst) dst;
+     Bool allowCap;
++    Bool blindedLoad;
+ `ifdef INCLUDE_TANDEM_VERIF
+     InstTag instTag;    // For recording Ld data in ROB
+ `endif
+@@ -327,6 +328,7 @@ typedef struct {
+     ByteOrTagEn        shiftedBE;
+     Maybe#(Trap)       fault;
+     Bool               allowCap;
++    Bool               blindedLoad;
+     Maybe#(LdKilledBy) killed;
+ } LdQDeqEntry deriving (Bits, Eq, FShow);
+ 
+@@ -376,7 +378,7 @@ interface SplitLSQ;
+     method ActionValue#(LSQUpdateAddrResult) updateAddr(
+         LdStQTag lsqTag, Maybe#(Trap) fault,
+         // below are only meaningful wen fault is Invalid
+-        Bool allowCap, Addr paddr, Bool isMMIO, ByteOrTagEn shiftedBE
++        Bool allowCap, Bool blindedLoad, Addr paddr, Bool isMMIO, ByteOrTagEn shiftedBE
+     );
+     // Issue a load, and remove dependence on this load issue.
+     method ActionValue#(LSQIssueLdResult) issueLd(
+@@ -662,6 +664,7 @@ module mkSplitLSQ(SplitLSQ);
+     Vector#(LdQSize, Reg#(Bool))                    ld_unsigned        <- replicateM(mkConfigRegU);
+     Vector#(LdQSize, Reg#(ByteOrTagEn))             ld_byteOrTagEn     <- replicateM(mkConfigRegU);
+     Vector#(LdQSize, Reg#(Bool))                    ld_allowCap        <- replicateM(mkConfigRegU);
++    Vector#(LdQSize, Reg#(Bool))                    ld_blindedLoad     <- replicateM(mkConfigRegU);
+     Vector#(LdQSize, Reg#(Bool))                    ld_acq             <- replicateM(mkConfigRegU);
+     Vector#(LdQSize, Reg#(Bool))                    ld_rel             <- replicateM(mkConfigRegU);
+     Vector#(LdQSize, Reg#(Maybe#(PhyDst)))          ld_dst             <- replicateM(mkConfigRegU);
+@@ -1509,7 +1512,7 @@ module mkSplitLSQ(SplitLSQ);
+ 
+     method ActionValue#(LSQUpdateAddrResult) updateAddr(
+         LdStQTag lsqTag, Maybe#(Trap) fault,
+-        Bool allowCap, Addr pa, Bool mmio, ByteOrTagEn shift_be
++        Bool allowCap, Bool blindedLoad, Addr pa, Bool mmio, ByteOrTagEn shift_be
+     ) if (!wrongSpec_conflict);
+         // index vec for vector functions
+         Vector#(LdQSize, LdQTag) idxVec = genWith(fromInteger);
+@@ -1552,6 +1555,7 @@ module mkSplitLSQ(SplitLSQ);
+             ld_computed_updAddr[tag] <= !isValid(fault);
+             ld_paddr_updAddr[tag] <= pa;
+             ld_allowCap[tag] <= allowCap;
++            ld_blindedLoad[tag] <= blindedLoad;
+             ld_isMMIO_updAddr[tag] <= mmio;
+             ld_shiftedBE_updAddr[tag] <= shift_be;
+ 
+@@ -1970,6 +1974,7 @@ module mkSplitLSQ(SplitLSQ);
+             wrongPath: False,
+             dst: Invalid,
+             allowCap: False,
++            blindedLoad: False,
+ `ifdef INCLUDE_TANDEM_VERIF
+             instTag: ld_instTag [t],    // For recording Ld data in ROB
+ `endif
+@@ -1998,9 +2003,11 @@ module mkSplitLSQ(SplitLSQ);
+             // the register files as the Toooba FPR is 64-bit
+             let bEn = ld_byteOrTagEn[t];
+             let allowCap = ld_allowCap[t];
++            let blindedLoad = ld_blindedLoad[t];
+             let dst = ld_dst[t];
+             let is32BitLd = bEn matches tagged DataMemAccess .bEnData &&& (bEnData[3] && !bEnData[7]) ? True : False;
+             res.allowCap = allowCap;
++            res.blindedLoad = blindedLoad;
+             res.dst = ld_dst[t];
+             if (dst.Valid.isFpuReg && is32BitLd)
+                res.data = fv_nanbox_MemTaggedData(
+@@ -2034,6 +2041,7 @@ module mkSplitLSQ(SplitLSQ);
+             shiftedBE: ld_shiftedBE_deqLd[deqP],
+             fault: ld_fault_deqLd[deqP],
+             allowCap: ld_allowCap[deqP],
++            blindedLoad: ld_blindedLoad[deqP],
+             killed: ld_killed_deqLd[deqP]
+         };
+     endmethod
+diff --git a/src_Core/RISCY_OOO/procs/lib/Types.bsv b/src_Core/RISCY_OOO/procs/lib/Types.bsv
+index 589e84e..51d1d28 100644
+--- a/src_Core/RISCY_OOO/procs/lib/Types.bsv
++++ b/src_Core/RISCY_OOO/procs/lib/Types.bsv
+@@ -66,6 +66,10 @@ typedef TDiv#(MemDataSz, 8) MemDataBytes;
+ typedef SizeOf#(MemTag) MemTagSz;
+ typedef SizeOf#(MemTaggedData) MemTaggedDataSz;
+ typedef TaggedData#(MemTag, MemData) MemTaggedData;
++typedef struct {
++  Bool blinded;
++  Data data;
++} BlindedData deriving (Eq);
+ instance Literal#(MemTaggedData);
+   function fromInteger(i);
+     Bit#(MemDataSz) val = fromInteger(i);
+@@ -73,6 +77,11 @@ instance Literal#(MemTaggedData);
+   endfunction
+   function inLiteralRange(x, i) = i < 2**valueOf(MemDataSz);
+ endinstance
++instance FShow #(BlindedData);
++  function fshow(blinded_data) = $format(
++                        "bl_tag: ", fshow(blinded_data.blinded),
++                        " data: ", fshow(blinded_data.data));
++endinstance
+ function data_res mergeDataBE(data_t0 oldData, data_t1 newData, be_t be)
+   provisos( Bits#(data_t0, data_sz), Bits#(data_t1, data_sz), Bits#(be_t, be_sz)
+           , Bits#(data_res, data_sz)
+diff --git a/src_SSITH_P3/xilinx_ip/component.xml b/src_SSITH_P3/xilinx_ip/component.xml
+index a764e79..8858cb2 100644
+--- a/src_SSITH_P3/xilinx_ip/component.xml
++++ b/src_SSITH_P3/xilinx_ip/component.xml
+@@ -2596,6 +2596,11 @@
+         <spirit:fileType>verilogSource</spirit:fileType>
+         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
+       </spirit:file>
++      <spirit:file>
++        <spirit:name>../Verilog_RTL/module_blimeChecksExec.v</spirit:name>
++        <spirit:fileType>verilogSource</spirit:fileType>
++        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
++      </spirit:file>
+       <spirit:file>
+         <spirit:name>../Verilog_RTL/module_capChecksMem.v</spirit:name>
+         <spirit:fileType>verilogSource</spirit:fileType>
