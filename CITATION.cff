@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+preferred-citation:
+  type: conference-paper
+  authors:
+  - family-names: "ElAtali"
+    given-names: "Hossam"
+  - family-names: "G{\"u}lmez"
+    given-names: "Merve"
+  - family-names: "Nyman"
+    given-names: "Thomas"
+  - family-names: "Asokan"
+    given-names: "N."
+  title: "{BLACKOUT}: {Data-Oblivious Computation} with {Blinded Capabilities}"
+  doi: 10.1145/3719027.3765169
+  collection-title: "Proceedings of the 2025 {{ACM SIGSAC Conference}} on {{Computer}} and {{Communications Security}} ({{CCS}} '25"
+  collection-type: proceedings
+  year: 2025
